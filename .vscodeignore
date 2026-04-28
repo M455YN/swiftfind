@@ -1,0 +1,10 @@
+.vscode/**
+.git/**
+.github/**
+assets/**
+agent-transcripts/**
+mcps/**
+*.vsix
+**/*.map
+**/.DS_Store
+**/Thumbs.db
