@@ -1,0 +1,167 @@
+{
+  "name": "swift-find",
+  "displayName": "%ext.displayName%",
+  "description": "%ext.description%",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Search",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:swiftFind.open",
+    "onView:swiftFind.sidebar"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "swiftFind.open",
+        "title": "%cmd.open%",
+        "shortTitle": "%cmd.open.short%"
+      },
+      {
+        "command": "swiftFind.openFullscreen",
+        "title": "%cmd.openFullscreen%"
+      },
+      {
+        "command": "swiftFind.toggleCaseSensitive",
+        "title": "%cmd.toggleCase%"
+      },
+      {
+        "command": "swiftFind.toggleRegex",
+        "title": "%cmd.toggleRegex%"
+      },
+      {
+        "command": "swiftFind.toggleWholeWord",
+        "title": "%cmd.toggleWholeWord%"
+      },
+      {
+        "command": "swiftFind.toggleFuzzy",
+        "title": "%cmd.toggleFuzzy%"
+      },
+      {
+        "command": "swiftFind.toggleExcludeGitIgnored",
+        "title": "%cmd.toggleExcludeGit%"
+      },
+      {
+        "command": "swiftFind.toggleExcludeSearchIgnored",
+        "title": "%cmd.toggleExcludeSearch%"
+      },
+      {
+        "command": "swiftFind.nextTab",
+        "title": "%cmd.nextTab%"
+      },
+      {
+        "command": "swiftFind.prevTab",
+        "title": "%cmd.prevTab%"
+      },
+      {
+        "command": "swiftFind.focusSidebar",
+        "title": "%cmd.focusSidebar%"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "swiftFind.open",
+        "key": "ctrl+shift+space",
+        "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
+      },
+      {
+        "command": "swiftFind.nextTab",
+        "key": "tab",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.prevTab",
+        "key": "shift+tab",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.toggleCaseSensitive",
+        "key": "alt+c",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.toggleRegex",
+        "key": "alt+r",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.toggleWholeWord",
+        "key": "alt+w",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.toggleFuzzy",
+        "key": "alt+f",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.toggleExcludeGitIgnored",
+        "key": "alt+g",
+        "when": "inQuickOpen"
+      },
+      {
+        "command": "swiftFind.toggleExcludeSearchIgnored",
+        "key": "alt+s",
+        "when": "inQuickOpen"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "swiftFind",
+          "title": "%views.container.title%",
+          "icon": "media/swiftfind.svg"
+        }
+      ]
+    },
+    "views": {
+      "swiftFind": [
+        {
+          "id": "swiftFind.sidebar",
+          "name": "%views.sidebar.name%",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "commandCenter": [
+        {
+          "command": "swiftFind.open",
+          "when": "true"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%cfg.title%",
+      "properties": {
+        "swiftFind.maxResults": {
+          "type": "number",
+          "default": 300,
+          "minimum": 10,
+          "description": "%cfg.maxResults%"
+        },
+        "swiftFind.caseInsensitive": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.caseInsensitive%"
+        },
+        "swiftFind.preview": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.preview%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "echo \"No linter configured\"",
+    "test": "echo \"No tests configured\""
+  }
+}

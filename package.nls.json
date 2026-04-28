@@ -1,0 +1,23 @@
+{
+  "ext.displayName": "SwiftFind",
+  "ext.description": "Fast unified search for VS Code with tabs and rich filters.",
+  "cmd.open": "Open SwiftFind",
+  "cmd.open.short": "SwiftFind",
+  "cmd.openFullscreen": "Open SwiftFind Fullscreen Results",
+  "cmd.toggleCase": "SwiftFind: Toggle Case Sensitive",
+  "cmd.toggleRegex": "SwiftFind: Toggle Regex",
+  "cmd.toggleWholeWord": "SwiftFind: Toggle Whole Word",
+  "cmd.toggleFuzzy": "SwiftFind: Toggle Fuzzy",
+  "cmd.toggleExcludeGit": "SwiftFind: Toggle Exclude Git Ignored",
+  "cmd.toggleExcludeSearch": "SwiftFind: Toggle Exclude Search Ignored",
+  "cmd.nextTab": "SwiftFind: Next Tab",
+  "cmd.prevTab": "SwiftFind: Previous Tab",
+  "cmd.focusSidebar": "SwiftFind: Focus Sidebar Panel",
+  "views.container.title": "SwiftFind",
+  "views.sidebar.name": "Search Panel",
+  "cfg.title": "SwiftFind",
+  "cfg.maxResults": "Maximum number of returned matches.",
+  "cfg.caseInsensitive": "Case-insensitive search mode.",
+  "cfg.preview": "Preview file while moving through results."
+}
+
