@@ -1,9 +1,27 @@
 {
   "name": "swift-find",
-  "displayName": "%ext.displayName%",
-  "description": "%ext.description%",
-  "version": "0.0.1",
-  "publisher": "local",
+  "displayName": "SwiftFind",
+  "description": "Fast unified search for VS Code with tabs and rich filters.",
+  "version": "0.1.0",
+  "publisher": "m455yn",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/M455YN/swiftfind.git"
+  },
+  "homepage": "https://github.com/M455YN/swiftfind#readme",
+  "bugs": {
+    "url": "https://github.com/M455YN/swiftfind/issues"
+  },
+  "icon": "media/icon.png",
+  "keywords": [
+    "search",
+    "fuzzy",
+    "ripgrep",
+    "findstr",
+    "quickpick",
+    "solution explorer"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
