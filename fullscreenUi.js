@@ -17,7 +17,8 @@ function openFullscreenSearch(payload) {
           useRegex: Boolean(payload?.options?.useRegex),
           fuzzy: Boolean(payload?.options?.fuzzy),
           excludeGitIgnored: payload?.options?.excludeGitIgnored !== false,
-          excludeSearchIgnored: payload?.options?.excludeSearchIgnored !== false
+          excludeSearchIgnored: payload?.options?.excludeSearchIgnored !== false,
+          scopePath: String(payload?.options?.scopePath || "")
         };
   const panel = vscode.window.createWebviewPanel(
     "swiftFindFullscreen",
@@ -40,7 +41,8 @@ function openFullscreenSearch(payload) {
         useRegex: Boolean(msg.useRegex),
         fuzzy: Boolean(msg.fuzzy),
         excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-        excludeSearchIgnored: Boolean(msg.excludeSearchIgnored)
+        excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+        scopePath: String(msg.scopePath || "")
       });
       panel.webview.postMessage({ type: "results", items, tab });
       return;
@@ -90,7 +92,9 @@ function getHtml(initialQuery, initialOptions) {
     fuzzy: pl ? "Fuzzy" : "Fuzzy",
     exclGit: pl ? "Pomin Git Ignored" : "Exclude Git Ignored",
     exclSearch: pl ? "Pomin .searchignore" : "Exclude Search Ignored",
-    results: pl ? "wynikow" : "results"
+    results: pl ? "wynikow" : "results",
+    scope: pl ? "Zakres" : "Scope",
+    clearScope: pl ? "Wyczyść zakres" : "Clear Scope"
   };
   return `<!doctype html>
 <html>
@@ -104,6 +108,26 @@ function getHtml(initialQuery, initialOptions) {
     .tab { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--vscode-button-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; font-size: 12px; }
     .tab.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
     .opts { display: flex; gap: 14px; align-items: center; grid-column: 1 / -1; font-size: 12px; opacity: 0.95; }
+    .scopebar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 0 0;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    .scopebtn {
+      padding: 4px 8px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid var(--vscode-button-border);
+      background: transparent;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+    }
+    .scopebtn:hover { background: var(--vscode-list-hoverBackground); }
     .opts label { display: inline-flex; gap: 6px; align-items: center; }
     input, button { padding: 8px; border-radius: 6px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
     button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
@@ -158,6 +182,10 @@ function getHtml(initialQuery, initialOptions) {
       <label><input id="excludeGitIgnored" type="checkbox" ${initialOptions.excludeGitIgnored ? "checked" : ""} /> ${L.exclGit} (Alt+G)</label>
       <label><input id="excludeSearchIgnored" type="checkbox" ${initialOptions.excludeSearchIgnored ? "checked" : ""} /> ${L.exclSearch} (Alt+S)</label>
     </div>
+    <div class="scopebar">
+      <div id="scopeInfo"></div>
+      <button id="clearScope" class="scopebtn">${L.clearScope}</button>
+    </div>
   </div>
   <div class="content" id="summary" style="padding-top:0; opacity:.85; font-size:12px;"></div>
   <div class="content" id="out"></div>
@@ -177,14 +205,22 @@ function getHtml(initialQuery, initialOptions) {
     const fuzzy = document.getElementById("fuzzy");
     const excludeGitIgnored = document.getElementById("excludeGitIgnored");
     const excludeSearchIgnored = document.getElementById("excludeSearchIgnored");
+    const scopeInfo = document.getElementById("scopeInfo");
+    const clearScopeBtn = document.getElementById("clearScope");
+    let scopePath = ${JSON.stringify(initialOptions.scopePath || "")};
     let activeTab = "text";
     const tabOrder = ["files","folders","text","symbols","commands"];
     let ctxItem = null;
+
+    function refreshScopeInfo() {
+      scopeInfo.textContent = scopePath ? "${L.scope}: " + scopePath : "";
+    }
 
     function run() {
       const query = q.value.trim();
       if (!query) { out.innerHTML = ""; return; }
       out.textContent = "Loading...";
+      refreshScopeInfo();
       vscode.postMessage({
         type: "search",
         query,
@@ -194,7 +230,8 @@ function getHtml(initialQuery, initialOptions) {
         useRegex: !!useRegex.checked,
         fuzzy: !!fuzzy.checked,
         excludeGitIgnored: !!excludeGitIgnored.checked,
-        excludeSearchIgnored: !!excludeSearchIgnored.checked
+        excludeSearchIgnored: !!excludeSearchIgnored.checked,
+        scopePath
       });
     }
 
@@ -206,6 +243,13 @@ function getHtml(initialQuery, initialOptions) {
     fuzzy.addEventListener("change", run);
     excludeGitIgnored.addEventListener("change", run);
     excludeSearchIgnored.addEventListener("change", run);
+    clearScopeBtn.addEventListener("click", () => {
+      scopePath = "";
+      refreshScopeInfo();
+      if (q.value.trim()) {
+        run();
+      }
+    });
 
     window.addEventListener("message", (event) => {
       const msg = event.data;
@@ -225,7 +269,7 @@ function getHtml(initialQuery, initialOptions) {
         everything: "Everything"
       };
       const tabName = tabNames[tab] || tab;
-      summary.textContent = tabName + ": " + items.length + " ${L.results}";
+      summary.textContent = tabName + ": " + items.length + " ${L.results}" + (scopePath ? " | ${L.scope}: " + scopePath : "");
       if (!items.length) { out.textContent = "${L.noResults}"; return; }
       if (tab === "text") {
         const grouped = new Map();
@@ -322,6 +366,7 @@ function getHtml(initialQuery, initialOptions) {
     });
 
     function esc(s){ return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+    refreshScopeInfo();
     if (q.value.trim()) run();
   </script>
 </body>

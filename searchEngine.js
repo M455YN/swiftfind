@@ -140,6 +140,28 @@ function applySearchIgnore(items, ignoreRegexes) {
   });
 }
 
+/**
+ * @param {SearchItem[]} items
+ * @param {string | undefined} scopePath
+ */
+function applyScope(items, scopePath) {
+  const scope = normalizeScopePath(scopePath);
+  if (!scope) return items;
+  return items.filter((it) => {
+    const p = String(it.filePath || it.description || "").replaceAll("\\", "/");
+    if (!p) {
+      // Commands etc.
+      return false;
+    }
+    if (p === scope) return true;
+    return p.startsWith(scope.endsWith("/") ? scope : scope + "/");
+  });
+}
+
+function normalizeScopePath(scopePath) {
+  return String(scopePath || "").replaceAll("\\", "/").replace(/^\.\/+/, "").trim();
+}
+
 function normalizeRelPath(filePath, rootPath) {
   const normalized = filePath.replaceAll("\\", "/");
   if (path.isAbsolute(filePath)) {
@@ -184,6 +206,7 @@ function searchWithBundledRg(rootPath, query, cfg, options) {
       return;
     }
 
+    const scopedTarget = normalizeScopePath(options?.scopePath) || ".";
     const args = [
       options?.matchCase ? "" : "-i",
       "--no-heading",
@@ -197,7 +220,7 @@ function searchWithBundledRg(rootPath, query, cfg, options) {
       "--max-filesize",
       "2M",
       query,
-      "."
+      scopedTarget
     ].filter(Boolean);
 
     const child = childProcess.spawn(rgPath, args, {
@@ -246,7 +269,11 @@ function searchWithBundledRg(rootPath, query, cfg, options) {
  */
 function fallbackSearch(rootPath, query, maxResults, options) {
   return new Promise((resolve) => {
-    const include = new vscode.RelativePattern(rootPath, "**/*");
+    const scope = normalizeScopePath(options?.scopePath);
+    const include = new vscode.RelativePattern(
+      rootPath,
+      scope ? (scope.includes(".") ? scope : `${scope}/**/*`) : "**/*"
+    );
     const exclude = new vscode.RelativePattern(
       rootPath,
       "**/{node_modules,.git,dist,build,out,.next,.cache,.venv,venv}/**"
@@ -547,16 +574,18 @@ async function searchByTab(tab, query, options) {
   const max = Math.max(100, Math.min(getConfig().maxResults, 2500));
 
   const opts = { ...getDefaultSearchOptions(), ...(options || {}) };
+  opts.scopePath = normalizeScopePath(opts.scopePath);
   const rootPath = getRootPath();
   const searchIgnoreRegexes = opts.excludeSearchIgnored ? await readSearchIgnoreRegexes(rootPath) : [];
+  const scoped = (arr) => applyScope(applySearchIgnore(arr, searchIgnoreRegexes), opts.scopePath);
 
-  if (normalizedTab === "files") return applySearchIgnore(await searchFiles(q, max, opts), searchIgnoreRegexes);
-  if (normalizedTab === "folders") return applySearchIgnore(await searchFolders(q, max, opts), searchIgnoreRegexes);
-  if (normalizedTab === "text") return applySearchIgnore(await search(q, opts), searchIgnoreRegexes);
-  if (normalizedTab === "symbols") return applySearchIgnore(await searchSymbols(q, max, opts), searchIgnoreRegexes);
-  if (normalizedTab === "commands") return applySearchIgnore(await searchCommands(q, max, opts), searchIgnoreRegexes);
+  if (normalizedTab === "files") return scoped(await searchFiles(q, max, opts));
+  if (normalizedTab === "folders") return scoped(await searchFolders(q, max, opts));
+  if (normalizedTab === "text") return scoped(await search(q, opts));
+  if (normalizedTab === "symbols") return scoped(await searchSymbols(q, max, opts));
+  if (normalizedTab === "commands") return scoped(await searchCommands(q, max, opts));
 
-  return applySearchIgnore(await search(q, opts), searchIgnoreRegexes);
+  return scoped(await search(q, opts));
 }
 
 function escapeRegex(text) {

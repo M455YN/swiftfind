@@ -14,7 +14,8 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:swiftFind.open",
-    "onView:swiftFind.sidebar"
+    "onView:swiftFind.sidebar",
+    "onView:swiftFind.solutionExplorer"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -63,6 +64,30 @@
       {
         "command": "swiftFind.focusSidebar",
         "title": "%cmd.focusSidebar%"
+      },
+      {
+        "command": "swiftFind.focusSolutionExplorer",
+        "title": "%cmd.focusSolution%"
+      },
+      {
+        "command": "swiftFind.solutionExplorer.refresh",
+        "title": "%cmd.solution.refresh%"
+      },
+      {
+        "command": "swiftFind.solutionExplorer.openNode",
+        "title": "%cmd.solution.open%"
+      },
+      {
+        "command": "swiftFind.solutionExplorer.searchHere",
+        "title": "%cmd.solution.searchHere%"
+      },
+      {
+        "command": "swiftFind.solutionExplorer.revealInOS",
+        "title": "%cmd.solution.reveal%"
+      },
+      {
+        "command": "swiftFind.solutionExplorer.copyPath",
+        "title": "%cmd.solution.copyPath%"
       }
     ],
     "keybindings": [
@@ -124,6 +149,10 @@
     "views": {
       "swiftFind": [
         {
+          "id": "swiftFind.solutionExplorer",
+          "name": "%views.solution.name%"
+        },
+        {
           "id": "swiftFind.sidebar",
           "name": "%views.sidebar.name%",
           "type": "webview"
@@ -131,6 +160,35 @@
       ]
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "swiftFind.solutionExplorer.refresh",
+          "when": "view == swiftFind.solutionExplorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "swiftFind.solutionExplorer.openNode",
+          "when": "view == swiftFind.solutionExplorer && viewItem == swiftFind.fileNode",
+          "group": "inline"
+        },
+        {
+          "command": "swiftFind.solutionExplorer.searchHere",
+          "when": "view == swiftFind.solutionExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "swiftFind.solutionExplorer.revealInOS",
+          "when": "view == swiftFind.solutionExplorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "swiftFind.solutionExplorer.copyPath",
+          "when": "view == swiftFind.solutionExplorer",
+          "group": "navigation@3"
+        }
+      ],
       "commandCenter": [
         {
           "command": "swiftFind.open",
