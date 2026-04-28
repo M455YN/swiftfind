@@ -3,7 +3,10 @@
   "displayName": "SwiftFind",
   "description": "Fast unified search for VS Code with tabs and rich filters.",
   "version": "0.1.0",
-  "publisher": "m455yn",
+  "publisher": "M455YN",
+  "author": {
+    "name": "Mateusz Afelt"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
