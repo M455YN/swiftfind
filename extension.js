@@ -3,6 +3,7 @@ const { openQuickSearch, markDirty, toggleOption, nextTab, prevTab } = require("
 const { openFullscreenSearch } = require("./fullscreenUi");
 const { SwiftFindSidebarProvider } = require("./sidebarView");
 const { SolutionExplorerProvider } = require("./solutionExplorer");
+const { TasksExplorerProvider } = require("./tasksExplorer");
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -16,6 +17,7 @@ function activate(context) {
   statusBarItem.show();
 
   const solutionProvider = new SolutionExplorerProvider(rootPath || "", context.extensionUri);
+  const tasksProvider = new TasksExplorerProvider(rootPath || "");
 
   context.subscriptions.push(
     statusBarItem,
@@ -23,12 +25,72 @@ function activate(context) {
       "swiftFind.sidebar",
       new SwiftFindSidebarProvider(context.extensionUri)
     ),
-    vscode.workspace.onDidSaveTextDocument(markDirty),
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      markDirty();
+      const p = String(doc?.uri?.fsPath || "").replaceAll("\\", "/").toLowerCase();
+      if (p.endsWith("/.vscode/tasks.json")) {
+        tasksProvider.refresh();
+      }
+    }),
     vscode.workspace.onDidDeleteFiles(markDirty),
     vscode.workspace.onDidCreateFiles(markDirty),
     vscode.workspace.onDidRenameFiles(markDirty),
     vscode.window.registerTreeDataProvider("swiftFind.solutionExplorer", solutionProvider),
+    vscode.window.registerTreeDataProvider("swiftFind.tasksExplorer", tasksProvider),
     vscode.commands.registerCommand("swiftFind.solutionExplorer.refresh", () => solutionProvider.refresh()),
+    vscode.commands.registerCommand("swiftFind.tasks.refresh", () => tasksProvider.refresh()),
+    vscode.commands.registerCommand("swiftFind.tasks.openTask", async (node) => {
+      if (!node?.taskName) return;
+      const tasks = await vscode.tasks.fetchTasks();
+      const task = tasks.find((t) => {
+        if (t.name !== node.taskName) return false;
+        const scope = t.scope;
+        if (!node.taskScope) return true;
+        if (scope === node.taskScope) return true;
+        if (
+          scope &&
+          typeof scope === "object" &&
+          node.taskScope &&
+          typeof node.taskScope === "object" &&
+          "uri" in scope &&
+          "uri" in node.taskScope
+        ) {
+          return scope.uri?.toString() === node.taskScope.uri?.toString();
+        }
+        return false;
+      });
+      if (!task) {
+        vscode.window.showWarningMessage(`Task '${node.taskName}' not found.`);
+        return;
+      }
+      await vscode.tasks.executeTask(task);
+    }),
+    vscode.commands.registerCommand("swiftFind.tasks.openDefinition", async (node) => {
+      const filePath = String(node?.tasksFilePath || "");
+      if (!filePath) {
+        vscode.window.showWarningMessage("tasks.json path not found for this task.");
+        return;
+      }
+      const uri = vscode.Uri.file(filePath);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(doc, { preview: false });
+      const taskName = String(node?.taskName || "").trim();
+      if (!taskName) return;
+
+      const escaped = taskName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`"label"\\s*:\\s*"${escaped}"`);
+      let targetLine = 0;
+      for (let i = 0; i < doc.lineCount; i += 1) {
+        if (re.test(doc.lineAt(i).text)) {
+          targetLine = i;
+          break;
+        }
+      }
+
+      const pos = new vscode.Position(targetLine, 0);
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+    }),
     vscode.commands.registerCommand("swiftFind.solutionExplorer.openNode", async (node) => {
       if (!node?.absPath || node.isDirectory) return;
       await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(node.absPath));

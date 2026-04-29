@@ -2,7 +2,7 @@
   "name": "swift-find",
   "displayName": "SwiftFind",
   "description": "Fast unified search for VS Code with tabs and rich filters.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "M455YN",
   "author": {
     "name": "Mateusz Afelt"
@@ -35,7 +35,8 @@
     "onStartupFinished",
     "onCommand:swiftFind.open",
     "onView:swiftFind.sidebar",
-    "onView:swiftFind.solutionExplorer"
+    "onView:swiftFind.solutionExplorer",
+    "onView:swiftFind.tasksExplorer"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -108,6 +109,18 @@
       {
         "command": "swiftFind.solutionExplorer.copyPath",
         "title": "%cmd.solution.copyPath%"
+      },
+      {
+        "command": "swiftFind.tasks.refresh",
+        "title": "%cmd.tasks.refresh%"
+      },
+      {
+        "command": "swiftFind.tasks.openTask",
+        "title": "%cmd.tasks.open%"
+      },
+      {
+        "command": "swiftFind.tasks.openDefinition",
+        "title": "%cmd.tasks.openDefinition%"
       }
     ],
     "keybindings": [
@@ -173,6 +186,10 @@
           "name": "%views.solution.name%"
         },
         {
+          "id": "swiftFind.tasksExplorer",
+          "name": "%views.tasks.name%"
+        },
+        {
           "id": "swiftFind.sidebar",
           "name": "%views.sidebar.name%",
           "type": "webview"
@@ -184,6 +201,11 @@
         {
           "command": "swiftFind.solutionExplorer.refresh",
           "when": "view == swiftFind.solutionExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "swiftFind.tasks.refresh",
+          "when": "view == swiftFind.tasksExplorer",
           "group": "navigation"
         }
       ],
@@ -207,6 +229,16 @@
           "command": "swiftFind.solutionExplorer.copyPath",
           "when": "view == swiftFind.solutionExplorer",
           "group": "navigation@3"
+        },
+        {
+          "command": "swiftFind.tasks.openTask",
+          "when": "view == swiftFind.tasksExplorer && viewItem == swiftFind.taskNode",
+          "group": "inline"
+        },
+        {
+          "command": "swiftFind.tasks.openDefinition",
+          "when": "view == swiftFind.tasksExplorer && viewItem == swiftFind.taskNode",
+          "group": "navigation@1"
         }
       ],
       "commandCenter": [

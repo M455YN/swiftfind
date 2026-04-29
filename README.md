@@ -32,8 +32,3 @@ Tab navigation:
 - `Tab` -> next tab
 - `Shift+Tab` -> previous tab
 
-## Install locally
-
-1. Open this folder in VS Code.
-2. Press `F5` to launch Extension Development Host.
-3. In the host window, use `Search+` or `Ctrl+Shift+Space`.

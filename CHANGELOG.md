@@ -2,6 +2,13 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.3] - 2026-04-29
+
+- Added `Task Runner` explorer view in the SwiftFind sidebar, powered by workspace `tasks.json`.
+- Added task actions: `Run Task` and context menu `Show in tasks.json`.
+- Improved task definition navigation to jump to the matching task label line in `tasks.json`.
+- Removed local development launch instructions from README for Marketplace-ready docs.
+
 ## [0.1.2] - 2026-04-29
 
 - Improved floating QuickPick modal UI with better button organization and toggle state behavior.
