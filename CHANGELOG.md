@@ -2,6 +2,12 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.1] - 2026-04-29
+
+- Refined Sidebar Search panel to a more VS Code-native look and spacing.
+- Fixed sidebar options layout where checkboxes and labels were misaligned.
+- Improved sidebar controls styling for better readability and consistency.
+
 ## [0.1.0] - 2026-04-28
 
 - Prepared extension metadata for VS Code Marketplace (`publisher`, `repository`, `homepage`, `bugs`, `license`, keywords, icon).

@@ -112,67 +112,99 @@ class SwiftFindSidebarProvider {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 10px; }
+    body {
+      font-family: var(--vscode-font-family);
+      color: var(--vscode-foreground);
+      padding: 8px;
+      margin: 0;
+      background: var(--vscode-sideBar-background);
+    }
     .wrap { display: grid; gap: 8px; }
-    .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 4px; }
     .tab {
-      border: 1px solid var(--vscode-button-border);
-      border-radius: 999px;
-      padding: 2px 8px;
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      padding: 2px 6px;
       font-size: 11px;
       background: transparent;
       color: var(--vscode-foreground);
       cursor: pointer;
     }
     .tab.active {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border-color: transparent;
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+      border-color: var(--vscode-list-activeSelectionBackground);
     }
-    input, button {
+    #q, button {
       width: 100%;
       box-sizing: border-box;
-      padding: 8px;
-      border-radius: 6px;
+      padding: 6px 8px;
+      border-radius: 4px;
       border: 1px solid var(--vscode-input-border);
       background: var(--vscode-input-background);
       color: var(--vscode-input-foreground);
     }
+    #q::placeholder { color: var(--vscode-input-placeholderForeground); }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     button {
-      border: none;
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
       cursor: pointer;
     }
-    button:hover { background: var(--vscode-button-hoverBackground); }
-    .opts { display: grid; gap: 4px; font-size: 12px; opacity: 0.95; }
+    button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .opts {
+      display: grid;
+      gap: 4px;
+      font-size: 11px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      padding: 6px;
+    }
+    .opts label {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: start;
+      gap: 6px;
+      line-height: 1.3;
+      cursor: pointer;
+    }
+    .opts input[type="checkbox"] {
+      width: 13px;
+      height: 13px;
+      margin: 1px 0 0;
+      padding: 0;
+      border-radius: 2px;
+      accent-color: var(--vscode-checkbox-selectBackground);
+      flex: 0 0 auto;
+    }
     .results {
       margin-top: 2px;
       border-top: 1px solid var(--vscode-panel-border);
-      padding-top: 8px;
-      max-height: 45vh;
+      padding-top: 6px;
+      max-height: 52vh;
       overflow: auto;
     }
     .section {
-      margin: 6px 0 4px;
+      margin: 8px 0 4px;
       font-size: 11px;
       font-weight: 600;
-      opacity: 0.85;
+      opacity: 0.9;
       border-bottom: 1px solid var(--vscode-panel-border);
       padding-bottom: 3px;
     }
     .row {
-      padding: 6px;
-      border-radius: 10px;
+      padding: 5px 6px;
+      border-radius: 4px;
       cursor: pointer;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
       border: 1px solid transparent;
     }
     .row:hover {
       background: var(--vscode-list-hoverBackground);
-      border-color: var(--vscode-panel-border);
+      border-color: var(--vscode-list-hoverBackground);
     }
-    .row .l { font-size: 12px; display: flex; gap: 8px; align-items: center; }
-    .row .d { font-size: 11px; opacity: 0.8; }
+    .row .l { font-size: 12px; display: flex; gap: 6px; align-items: center; }
+    .row .d { font-size: 11px; opacity: 0.75; }
     .row .t { font-size: 11px; opacity: 0.9; font-family: var(--vscode-editor-font-family); }
     .ico {
       width: 14px;
@@ -197,7 +229,7 @@ class SwiftFindSidebarProvider {
       border-radius: 3px;
       padding: 0 1px;
     }
-    .muted { font-size: 12px; opacity: 0.8; }
+    .muted { font-size: 11px; opacity: 0.75; }
     .ctx {
       position: fixed;
       z-index: 100;
@@ -205,7 +237,7 @@ class SwiftFindSidebarProvider {
       border: 1px solid var(--vscode-menu-border);
       background: var(--vscode-menu-background);
       color: var(--vscode-menu-foreground);
-      border-radius: 8px;
+      border-radius: 4px;
       box-shadow: 0 8px 18px rgba(0,0,0,.28);
       display: none;
       overflow: hidden;
@@ -233,8 +265,10 @@ class SwiftFindSidebarProvider {
       <button class="tab" data-tab="commands">${L.commands}</button>
     </div>
     <input id="q" placeholder="${L.query}" />
-    <button id="quick">${L.openFloating}</button>
-    <button id="full">${L.openFullscreen}</button>
+    <div class="actions">
+      <button id="quick">${L.openFloating}</button>
+      <button id="full">${L.openFullscreen}</button>
+    </div>
     <div class="opts">
       <label><input id="matchCase" type="checkbox" /> ${L.matchCase}</label>
       <label><input id="wholeWord" type="checkbox" /> ${L.wholeWord}</label>
