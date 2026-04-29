@@ -103,13 +103,14 @@ function getHtml(initialQuery, initialOptions) {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); margin: 0; }
-    .top { position: sticky; top: 0; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 10px; display: grid; grid-template-columns: 1fr auto; gap: 8px; z-index: 2; }
-    .tabs { display: flex; gap: 6px; grid-column: 1 / -1; }
-    .tab { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--vscode-button-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; font-size: 12px; }
-    .tab.active { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
-    .opts { display: flex; gap: 14px; align-items: center; grid-column: 1 / -1; font-size: 12px; opacity: 0.95; }
+    .top { position: sticky; top: 0; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 10px 12px; display: grid; grid-template-columns: 1fr; gap: 8px; z-index: 5; }
+    .headline { font-size: 12px; font-weight: 600; opacity: .9; letter-spacing: .2px; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tab { padding: 4px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; font-size: 12px; }
+    .tab.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-list-activeSelectionBackground); }
+    .searchbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .opts { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 4px 10px; font-size: 12px; opacity: 0.95; border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 6px 8px; }
     .scopebar {
-      grid-column: 1 / -1;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -121,23 +122,24 @@ function getHtml(initialQuery, initialOptions) {
     .scopebtn {
       padding: 4px 8px;
       font-size: 11px;
-      border-radius: 6px;
-      border: 1px solid var(--vscode-button-border);
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border);
       background: transparent;
       color: var(--vscode-foreground);
       cursor: pointer;
     }
     .scopebtn:hover { background: var(--vscode-list-hoverBackground); }
-    .opts label { display: inline-flex; gap: 6px; align-items: center; }
-    input, button { padding: 8px; border-radius: 6px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-    button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; cursor: pointer; }
-    button:hover { background: var(--vscode-button-hoverBackground); }
-    .content { padding: 10px; }
+    .opts label { display: inline-flex; gap: 6px; align-items: center; line-height: 1.3; }
+    #q, #go { padding: 7px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+    #go { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
+    #go:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .content { padding: 10px 12px; }
     .folder { margin-top: 12px; font-weight: 600; opacity: 0.9; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 4px; }
-    .row { padding: 7px 8px; border-radius: 6px; cursor: pointer; }
-    .row:hover { background: var(--vscode-list-hoverBackground); }
+    .row { padding: 7px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+    .row:hover { background: var(--vscode-list-hoverBackground); border-color: var(--vscode-list-hoverBackground); }
     .meta { opacity: 0.8; font-size: 12px; }
     .detail { font-family: var(--vscode-editor-font-family); font-size: 12px; opacity: 0.9; }
+    #summary { position: sticky; top: 142px; z-index: 3; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
     .ctx {
       position: fixed;
       z-index: 100;
@@ -165,6 +167,7 @@ function getHtml(initialQuery, initialOptions) {
 </head>
 <body>
   <div class="top">
+    <div class="headline">${L.resultsTitle}</div>
     <div class="tabs" id="tabs">
       <button class="tab" data-tab="files">${L.files}</button>
       <button class="tab" data-tab="folders">${L.folders}</button>
@@ -172,8 +175,10 @@ function getHtml(initialQuery, initialOptions) {
       <button class="tab" data-tab="symbols">${L.symbols}</button>
       <button class="tab" data-tab="commands">${L.commands}</button>
     </div>
-    <input id="q" placeholder="${L.query}" value="${escapeHtml(initialQuery)}" />
-    <button id="go">${L.search}</button>
+    <div class="searchbar">
+      <input id="q" placeholder="${L.query}" value="${escapeHtml(initialQuery)}" />
+      <button id="go">${L.search}</button>
+    </div>
     <div class="opts">
       <label><input id="matchCase" type="checkbox" ${initialOptions.matchCase ? "checked" : ""} /> ${L.matchCase} (Alt+C)</label>
       <label><input id="wholeWord" type="checkbox" ${initialOptions.wholeWord ? "checked" : ""} /> ${L.wholeWord} (Alt+W)</label>

@@ -2,6 +2,12 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.2] - 2026-04-29
+
+- Improved floating QuickPick modal UI with better button organization and toggle state behavior.
+- Refined fullscreen search UI layout (header, tabs, options grid, and sticky summary).
+- Updated result list styling in fullscreen mode for clearer scanability and a more native VS Code feel.
+
 ## [0.1.1] - 2026-04-29
 
 - Refined Sidebar Search panel to a more VS Code-native look and spacing.

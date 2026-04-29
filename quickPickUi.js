@@ -44,77 +44,117 @@ async function openFullscreenResults(query) {
 
 function buildButtons() {
   const activeColor = new vscode.ThemeColor("textLink.foreground");
+  const titleLocation = vscode.QuickInputButtonLocation?.Title;
+  const inlineLocation = vscode.QuickInputButtonLocation?.Inline;
+  const toggle = (checked) => ({ checked });
   return [
     {
       key: "tab-files",
       iconPath: new vscode.ThemeIcon("file", activeTab === "files" ? activeColor : undefined),
-      tooltip: t("Files", "Pliki")
+      tooltip: t("Files", "Pliki"),
+      location: titleLocation,
+      toggle: toggle(activeTab === "files")
     },
     {
       key: "tab-folders",
       iconPath: new vscode.ThemeIcon("folder", activeTab === "folders" ? activeColor : undefined),
-      tooltip: t("Folders", "Foldery")
+      tooltip: t("Folders", "Foldery"),
+      location: titleLocation,
+      toggle: toggle(activeTab === "folders")
     },
     {
       key: "tab-text",
       iconPath: new vscode.ThemeIcon("symbol-text", activeTab === "text" ? activeColor : undefined),
-      tooltip: t("Text", "Tekst")
+      tooltip: t("Text", "Tekst"),
+      location: titleLocation,
+      toggle: toggle(activeTab === "text")
     },
     {
       key: "tab-symbols",
       iconPath: new vscode.ThemeIcon("symbol-class", activeTab === "symbols" ? activeColor : undefined),
-      tooltip: t("Symbols", "Symbole")
+      tooltip: t("Symbols", "Symbole"),
+      location: titleLocation,
+      toggle: toggle(activeTab === "symbols")
     },
     {
       key: "tab-commands",
       iconPath: new vscode.ThemeIcon("terminal", activeTab === "commands" ? activeColor : undefined),
-      tooltip: t("Commands", "Polecenia")
+      tooltip: t("Commands", "Polecenia"),
+      location: titleLocation,
+      toggle: toggle(activeTab === "commands")
     },
     {
       key: "case-sensitive",
       iconPath: new vscode.ThemeIcon("case-sensitive", searchOptions.matchCase ? activeColor : undefined),
-      tooltip: t("Match Case", "Uwzgledniaj wielkosc liter") + `: ${searchOptions.matchCase ? "ON" : "OFF"}`
+      tooltip: t("Match Case", "Uwzgledniaj wielkosc liter") + ` (Alt+C): ${searchOptions.matchCase ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.matchCase)
     },
     {
       key: "whole-word",
       iconPath: new vscode.ThemeIcon("whole-word", searchOptions.wholeWord ? activeColor : undefined),
-      tooltip: t("Match Whole Word", "Dopasuj cale slowo") + `: ${searchOptions.wholeWord ? "ON" : "OFF"}`
+      tooltip: t("Match Whole Word", "Dopasuj cale slowo") + ` (Alt+W): ${searchOptions.wholeWord ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.wholeWord)
     },
     {
       key: "regex",
       iconPath: new vscode.ThemeIcon("regex", searchOptions.useRegex ? activeColor : undefined),
-      tooltip: t("Use Regular Expression", "Uzyj wyrazenia regularnego") + `: ${searchOptions.useRegex ? "ON" : "OFF"}`
+      tooltip: t("Use Regular Expression", "Uzyj wyrazenia regularnego") + ` (Alt+R): ${searchOptions.useRegex ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.useRegex)
     },
     {
       key: "fuzzy",
       iconPath: new vscode.ThemeIcon("sparkle", searchOptions.fuzzy ? activeColor : undefined),
-      tooltip: t("Fuzzy Search", "Wyszukiwanie fuzzy") + `: ${searchOptions.fuzzy ? "ON" : "OFF"}`
+      tooltip: t("Fuzzy Search", "Wyszukiwanie fuzzy") + ` (Alt+F): ${searchOptions.fuzzy ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.fuzzy)
     },
     {
       key: "exclude-git",
       iconPath: new vscode.ThemeIcon("repo", searchOptions.excludeGitIgnored ? activeColor : undefined),
-      tooltip: t("Exclude Git Ignored", "Pomin pliki ignorowane przez Git") + `: ${searchOptions.excludeGitIgnored ? "ON" : "OFF"}`
+      tooltip: t("Exclude Git Ignored", "Pomin pliki ignorowane przez Git") + ` (Alt+G): ${searchOptions.excludeGitIgnored ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.excludeGitIgnored)
     },
     {
       key: "exclude-searchignore",
       iconPath: new vscode.ThemeIcon("filter", searchOptions.excludeSearchIgnored ? activeColor : undefined),
-      tooltip: t("Exclude Search Ignored", "Pomin pliki z .searchignore") + `: ${searchOptions.excludeSearchIgnored ? "ON" : "OFF"}`
+      tooltip: t("Exclude Search Ignored", "Pomin pliki z .searchignore") + ` (Alt+S): ${searchOptions.excludeSearchIgnored ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.excludeSearchIgnored)
     },
     {
       key: "screen-full",
       iconPath: new vscode.ThemeIcon("screen-full"),
-      tooltip: t("Open fullscreen results", "Otworz pelnoekranowe wyniki")
+      tooltip: t("Open fullscreen results", "Otworz pelnoekranowe wyniki"),
+      location: titleLocation
     }
   ];
+}
+
+function setQuickPickTitle(quickPick, count) {
+  const tabName = {
+    files: t("Files", "Pliki"),
+    folders: t("Folders", "Foldery"),
+    text: t("Text", "Tekst"),
+    symbols: t("Symbols", "Symbole"),
+    commands: t("Commands", "Polecenia")
+  }[activeTab] || activeTab;
+  const resultsPart =
+    typeof count === "number" ? `: ${count} ${t("results", "wynikow")}` : "";
+  quickPick.title = `${tabName}${resultsPart}`;
 }
 
 function openQuickSearch() {
   const quickPick = vscode.window.createQuickPick();
   activeQuickPick = quickPick;
   quickPick.matchOnDescription = false;
-  quickPick.matchOnDetail = true;
+  quickPick.matchOnDetail = false;
+  quickPick.keepScrollPosition = true;
   quickPick.placeholder = t("Search in files", "Szukaj w plikach");
-  quickPick.title = t("Text", "Tekst");
+  setQuickPickTitle(quickPick);
   quickPick.buttons = buildButtons();
 
   if (cacheValue) {
@@ -139,14 +179,7 @@ function openQuickSearch() {
     cacheValue = value;
     cacheItems = grouped;
     quickPick.items = grouped;
-    const tabName = {
-      files: t("Files", "Pliki"),
-      folders: t("Folders", "Foldery"),
-      text: t("Text", "Tekst"),
-      symbols: t("Symbols", "Symbole"),
-      commands: t("Commands", "Polecenia")
-    }[activeTab] || activeTab;
-    quickPick.title = `${tabName}: ${grouped.length} ${t("results", "wynikow")}`;
+    setQuickPickTitle(quickPick, grouped.length);
     quickPick.busy = false;
   });
   lastUpdateFn = updateItems;
@@ -188,13 +221,7 @@ function openQuickSearch() {
       if (quickPick.value) {
         await updateItems(quickPick.value);
       } else {
-        quickPick.title = {
-          files: t("Files", "Pliki"),
-          folders: t("Folders", "Foldery"),
-          text: t("Text", "Tekst"),
-          symbols: t("Symbols", "Symbole"),
-          commands: t("Commands", "Polecenia")
-        }[activeTab] || activeTab;
+        setQuickPickTitle(quickPick);
       }
       return;
     }
@@ -276,7 +303,7 @@ function shiftTab(step) {
   const next = (i + step + tabs.length) % tabs.length;
   activeTab = tabs[next];
   if (activeQuickPick) {
-    activeQuickPick.title = activeTab[0].toUpperCase() + activeTab.slice(1);
+    setQuickPickTitle(activeQuickPick);
   }
   refreshActiveQuickPick();
 }
