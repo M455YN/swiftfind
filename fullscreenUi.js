@@ -2,6 +2,7 @@ const vscode = require("vscode");
 const path = require("path");
 const { searchByTab, openResult } = require("./searchEngine");
 const { isPolish } = require("./i18n");
+const { openReplacePanel } = require("./replaceUi");
 
 /**
  * @param {{query?:string, options?:{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} | string | undefined} payload
@@ -70,6 +71,23 @@ function openFullscreenSearch(payload) {
       if (!root || !rel) return;
       const uri = vscode.Uri.file(path.join(root, rel));
       await vscode.commands.executeCommand("revealFileInOS", uri);
+      return;
+    }
+
+    if (msg.type === "openReplace") {
+      openReplacePanel({
+        find: String(msg.find || ""),
+        replace: String(msg.replace || ""),
+        options: {
+          matchCase: Boolean(msg.matchCase),
+          wholeWord: Boolean(msg.wholeWord),
+          useRegex: Boolean(msg.useRegex),
+          fuzzy: Boolean(msg.fuzzy),
+          excludeGitIgnored: Boolean(msg.excludeGitIgnored),
+          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+          scopePath: String(msg.scopePath || "")
+        }
+      });
     }
   });
 }
@@ -94,7 +112,8 @@ function getHtml(initialQuery, initialOptions) {
     exclSearch: pl ? "Pomin .searchignore" : "Exclude Search Ignored",
     results: pl ? "wynikow" : "results",
     scope: pl ? "Zakres" : "Scope",
-    clearScope: pl ? "Wyczyść zakres" : "Clear Scope"
+    clearScope: pl ? "Wyczyść zakres" : "Clear Scope",
+    findReplace: pl ? "Znajdź i zamień…" : "Find and replace…"
   };
   return `<!doctype html>
 <html>
@@ -179,6 +198,9 @@ function getHtml(initialQuery, initialOptions) {
       <input id="q" placeholder="${L.query}" value="${escapeHtml(initialQuery)}" />
       <button id="go">${L.search}</button>
     </div>
+    <div style="margin-top:4px;">
+      <button type="button" id="btnReplace" class="scopebtn">${L.findReplace}</button>
+    </div>
     <div class="opts">
       <label><input id="matchCase" type="checkbox" ${initialOptions.matchCase ? "checked" : ""} /> ${L.matchCase} (Alt+C)</label>
       <label><input id="wholeWord" type="checkbox" ${initialOptions.wholeWord ? "checked" : ""} /> ${L.wholeWord} (Alt+W)</label>
@@ -254,6 +276,21 @@ function getHtml(initialQuery, initialOptions) {
       if (q.value.trim()) {
         run();
       }
+    });
+
+    document.getElementById("btnReplace").addEventListener("click", () => {
+      vscode.postMessage({
+        type: "openReplace",
+        find: q.value,
+        replace: "",
+        matchCase: !!matchCase.checked,
+        wholeWord: !!wholeWord.checked,
+        useRegex: !!useRegex.checked,
+        fuzzy: !!fuzzy.checked,
+        excludeGitIgnored: !!excludeGitIgnored.checked,
+        excludeSearchIgnored: !!excludeSearchIgnored.checked,
+        scopePath
+      });
     });
 
     window.addEventListener("message", (event) => {

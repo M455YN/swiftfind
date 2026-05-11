@@ -629,6 +629,305 @@ function mergeUniqueResults(primary, secondary) {
   return out;
 }
 
+/**
+ * @param {string} src
+ * @param {string} query
+ * @param {{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} options
+ */
+function lineMatchesFind(src, query, options) {
+  const regex = buildRegex(query, {
+    matchCase: Boolean(options.matchCase),
+    wholeWord: Boolean(options.wholeWord),
+    useRegex: Boolean(options.useRegex)
+  });
+  if (!regex) return false;
+  return Boolean(regex.exec(src));
+}
+
+/**
+ * @param {string} query
+ * @param {{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} options
+ */
+function buildReplaceRegex(query, options) {
+  try {
+    const source = options.useRegex ? query : escapeRegex(query);
+    const bounded = options.wholeWord ? `\\b(?:${source})\\b` : source;
+    return new RegExp(bounded, `${options.matchCase ? "" : "i"}g`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} text
+ * @param {string} findQuery
+ * @param {string} replaceStr
+ * @param {{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} options
+ */
+function replaceInString(text, findQuery, replaceStr, options) {
+  const re = buildReplaceRegex(findQuery, options);
+  if (!re) {
+    return { newText: text, count: 0, error: "invalid_pattern" };
+  }
+  const matches = text.match(re);
+  const count = matches ? matches.length : 0;
+  if (!count) {
+    return { newText: text, count: 0 };
+  }
+  const newText = text.replace(re, replaceStr ?? "");
+  return { newText, count };
+}
+
+/**
+ * @param {string} rootPath
+ * @param {string} query
+ * @param {Record<string, unknown>} options
+ * @returns {Promise<string[] | null>}
+ */
+function rgListFilesWithMatches(rootPath, query, options) {
+  return new Promise(async (resolve) => {
+    const rgPath = await getBundledRipgrepPath();
+    if (!rgPath) {
+      resolve(null);
+      return;
+    }
+    const scopedTarget = normalizeScopePath(options?.scopePath) || ".";
+    const args = [
+      options?.matchCase ? "" : "-i",
+      "-l",
+      "--color",
+      "never",
+      options?.wholeWord ? "-w" : "",
+      options?.useRegex ? "" : "-F",
+      options?.excludeGitIgnored ? "" : "--no-ignore-vcs",
+      "--max-filesize",
+      "2M",
+      query,
+      scopedTarget
+    ].filter(Boolean);
+
+    const child = childProcess.spawn(rgPath, args, {
+      cwd: rootPath,
+      windowsHide: true
+    });
+
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+      if (stdout.length > 32 * 1024 * 1024) {
+        child.kill();
+      }
+    });
+    child.stderr.on("data", () => {});
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => {
+      if (code !== 0 && code !== 1) {
+        resolve(null);
+        return;
+      }
+      const lines = stdout.split(/\r?\n/).filter(Boolean);
+      const files = lines
+        .map((line) => normalizeRelPath(line.trim(), rootPath))
+        .filter(Boolean);
+      resolve(files);
+    });
+  });
+}
+
+/**
+ * @param {string} rootPath
+ * @param {string} query
+ * @param {Record<string, unknown>} options
+ * @returns {Promise<string[]>}
+ */
+async function fallbackListFilesContainingText(rootPath, query, options) {
+  const scope = normalizeScopePath(options?.scopePath);
+  const include = new vscode.RelativePattern(
+    rootPath,
+    scope ? (scope.includes(".") ? scope : `${scope}/**/*`) : "**/*"
+  );
+  const exclude = new vscode.RelativePattern(
+    rootPath,
+    "**/{node_modules,.git,dist,build,out,.next,.cache,.venv,venv}/**"
+  );
+  const uris = await vscode.workspace.findFiles(include, exclude, 5000);
+  /** @type {Set<string>} */
+  const matched = new Set();
+  for (const uri of uris) {
+    let stat;
+    try {
+      stat = await fs.stat(uri.fsPath);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
+    let content;
+    try {
+      content = await fs.readFile(uri.fsPath, "utf8");
+    } catch {
+      continue;
+    }
+    const filePath = normalizeRelPath(uri.fsPath, rootPath);
+    const lines = content.split(/\r?\n/);
+    for (const line of lines) {
+      if (lineMatchesFind(line, query, options)) {
+        matched.add(filePath);
+        break;
+      }
+    }
+  }
+  return [...matched];
+}
+
+/**
+ * @param {string[]} paths
+ * @param {RegExp[]} ignoreRegexes
+ * @param {string | undefined} scopePath
+ */
+function filterPathsForReplace(paths, ignoreRegexes, scopePath) {
+  const scope = normalizeScopePath(scopePath);
+  let out = paths.map((p) => p.replaceAll("\\", "/"));
+  if (ignoreRegexes.length) {
+    out = out.filter((p) => !ignoreRegexes.some((r) => r.test(p)));
+  }
+  if (scope) {
+    out = out.filter((p) => {
+      if (p === scope) return true;
+      return p.startsWith(scope.endsWith("/") ? scope : `${scope}/`);
+    });
+  }
+  return out;
+}
+
+/**
+ * @param {string} findQuery
+ * @param {Record<string, unknown>} options
+ * @returns {Promise<string[]>}
+ */
+async function listFilesContainingText(findQuery, options) {
+  const rootPath = getRootPath();
+  if (!rootPath || !String(findQuery).trim()) {
+    return [];
+  }
+  const opts = { ...getDefaultSearchOptions(), ...(options || {}) };
+  opts.scopePath = normalizeScopePath(opts.scopePath);
+  const searchIgnoreRegexes = opts.excludeSearchIgnored ? await readSearchIgnoreRegexes(rootPath) : [];
+
+  let paths = await rgListFilesWithMatches(rootPath, String(findQuery).trim(), opts);
+  if (!paths || !paths.length) {
+    paths = await fallbackListFilesContainingText(rootPath, String(findQuery).trim(), opts);
+  }
+  const filtered = filterPathsForReplace(paths, searchIgnoreRegexes, opts.scopePath);
+  return [...new Set(filtered)];
+}
+
+/**
+ * @param {string} find
+ * @param {string} replace
+ * @param {Record<string, unknown>} options
+ */
+async function previewReplace(find, replace, options) {
+  const rootPath = getRootPath();
+  if (!rootPath) {
+    return { ok: false, message: t("Open a workspace folder first.", "Najpierw otworz folder roboczy.") };
+  }
+  const opts = { ...getDefaultSearchOptions(), ...(options || {}) };
+  if (opts.fuzzy) {
+    return {
+      ok: false,
+      message: t("Replace does not support fuzzy mode. Turn off fuzzy.", "Zamiana nie obsluguje trybu fuzzy. Wylacz fuzzy.")
+    };
+  }
+  const findTrim = String(find || "").trim();
+  if (!findTrim) {
+    return { ok: false, message: t("Find text is empty.", "Pusty tekst do znalezienia.") };
+  }
+  const testRe = buildReplaceRegex(findTrim, opts);
+  if (!testRe) {
+    return { ok: false, message: t("Invalid find pattern.", "Nieprawidlowy wzor wyszukiwania.") };
+  }
+
+  const paths = await listFilesContainingText(findTrim, opts);
+  const unique = [...new Set(paths)];
+  let occurrences = 0;
+  let filesWithHits = 0;
+  for (const rel of unique) {
+    const abs = path.join(rootPath, rel);
+    try {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(abs));
+      const text = doc.getText();
+      const { count } = replaceInString(text, findTrim, String(replace ?? ""), opts);
+      if (count > 0) {
+        occurrences += count;
+        filesWithHits += 1;
+      }
+    } catch {
+      // Skip unreadable files.
+    }
+  }
+  return { ok: true, files: filesWithHits, occurrences };
+}
+
+/**
+ * @param {string} find
+ * @param {string} replace
+ * @param {Record<string, unknown>} options
+ */
+async function replaceAllInScope(find, replace, options) {
+  const rootPath = getRootPath();
+  if (!rootPath) {
+    return { ok: false, message: t("Open a workspace folder first.", "Najpierw otworz folder roboczy.") };
+  }
+  const opts = { ...getDefaultSearchOptions(), ...(options || {}) };
+  if (opts.fuzzy) {
+    return {
+      ok: false,
+      message: t("Replace does not support fuzzy mode.", "Zamiana nie obsluguje trybu fuzzy.")
+    };
+  }
+  const findTrim = String(find || "").trim();
+  if (!findTrim) {
+    return { ok: false, message: t("Find text is empty.", "Pusty tekst do znalezienia.") };
+  }
+  const testRe = buildReplaceRegex(findTrim, opts);
+  if (!testRe) {
+    return { ok: false, message: t("Invalid find pattern.", "Nieprawidlowy wzor wyszukiwania.") };
+  }
+
+  const paths = await listFilesContainingText(findTrim, opts);
+  const unique = [...new Set(paths)];
+  const edit = new vscode.WorkspaceEdit();
+  let changedFiles = 0;
+  let occurrences = 0;
+  const replaceStr = String(replace ?? "");
+
+  for (const rel of unique) {
+    const uri = vscode.Uri.file(path.join(rootPath, rel));
+    try {
+      const doc = await vscode.workspace.openTextDocument(uri);
+      const text = doc.getText();
+      const { newText, count } = replaceInString(text, findTrim, replaceStr, opts);
+      if (!count) continue;
+      occurrences += count;
+      const endPos = doc.positionAt(text.length);
+      edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), endPos), newText);
+      changedFiles += 1;
+    } catch {
+      // Skip unreadable files.
+    }
+  }
+
+  if (changedFiles === 0) {
+    return { ok: true, changedFiles: 0, occurrences: 0, message: t("No matches to replace.", "Brak dopasowan do zamiany.") };
+  }
+
+  const applied = await vscode.workspace.applyEdit(edit);
+  if (!applied) {
+    return { ok: false, message: t("Could not apply workspace edit.", "Nie udalo sie zastosowac zmian.") };
+  }
+  return { ok: true, changedFiles, occurrences };
+}
+
 async function openResult(item, preserveFocus) {
   if (!item.filePath) return;
   const rootPath = getRootPath();
@@ -648,5 +947,7 @@ module.exports = {
   getConfig,
   search,
   openResult,
-  searchByTab
+  searchByTab,
+  previewReplace,
+  replaceAllInScope
 };

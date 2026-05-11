@@ -33,6 +33,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
+    "onCommand:swiftFind.openReplace",
     "onCommand:swiftFind.open",
     "onView:swiftFind.sidebar",
     "onView:swiftFind.solutionExplorer",
@@ -49,6 +50,10 @@
       {
         "command": "swiftFind.openFullscreen",
         "title": "%cmd.openFullscreen%"
+      },
+      {
+        "command": "swiftFind.openReplace",
+        "title": "%cmd.openReplace%"
       },
       {
         "command": "swiftFind.toggleCaseSensitive",
@@ -103,6 +108,10 @@
         "title": "%cmd.solution.searchHere%"
       },
       {
+        "command": "swiftFind.solutionExplorer.replaceHere",
+        "title": "%cmd.solution.replaceHere%"
+      },
+      {
         "command": "swiftFind.solutionExplorer.revealInOS",
         "title": "%cmd.solution.reveal%"
       },
@@ -127,6 +136,11 @@
       {
         "command": "swiftFind.open",
         "key": "ctrl+shift+space",
+        "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
+      },
+      {
+        "command": "swiftFind.openReplace",
+        "key": "ctrl+shift+h",
         "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
       },
       {
@@ -221,14 +235,19 @@
           "group": "navigation@1"
         },
         {
-          "command": "swiftFind.solutionExplorer.revealInOS",
+          "command": "swiftFind.solutionExplorer.replaceHere",
           "when": "view == swiftFind.solutionExplorer",
           "group": "navigation@2"
         },
         {
-          "command": "swiftFind.solutionExplorer.copyPath",
+          "command": "swiftFind.solutionExplorer.revealInOS",
           "when": "view == swiftFind.solutionExplorer",
           "group": "navigation@3"
+        },
+        {
+          "command": "swiftFind.solutionExplorer.copyPath",
+          "when": "view == swiftFind.solutionExplorer",
+          "group": "navigation@4"
         },
         {
           "command": "swiftFind.tasks.openTask",
@@ -244,6 +263,10 @@
       "commandCenter": [
         {
           "command": "swiftFind.open",
+          "when": "true"
+        },
+        {
+          "command": "swiftFind.openReplace",
           "when": "true"
         }
       ]

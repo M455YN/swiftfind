@@ -4,6 +4,7 @@ const { openFullscreenSearch } = require("./fullscreenUi");
 const { SwiftFindSidebarProvider } = require("./sidebarView");
 const { SolutionExplorerProvider } = require("./solutionExplorer");
 const { TasksExplorerProvider } = require("./tasksExplorer");
+const { openReplacePanel } = require("./replaceUi");
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -113,6 +114,22 @@ function activate(context) {
         }
       });
     }),
+    vscode.commands.registerCommand("swiftFind.solutionExplorer.replaceHere", async (node) => {
+      if (!node?.relPath) return;
+      openReplacePanel({
+        find: "",
+        replace: "",
+        options: {
+          scopePath: node.relPath,
+          matchCase: false,
+          wholeWord: false,
+          useRegex: false,
+          fuzzy: false,
+          excludeGitIgnored: true,
+          excludeSearchIgnored: true
+        }
+      });
+    }),
     vscode.commands.registerCommand("swiftFind.focusSolutionExplorer", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.swiftFind");
       await vscode.commands.executeCommand("swiftFind.solutionExplorer.focus");
@@ -122,6 +139,9 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("swiftFind.openFullscreen", (payload) => {
       openFullscreenSearch(payload);
+    }),
+    vscode.commands.registerCommand("swiftFind.openReplace", (payload) => {
+      openReplacePanel(payload && typeof payload === "object" ? payload : {});
     }),
     vscode.commands.registerCommand("swiftFind.focusSidebar", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.swiftFind");
