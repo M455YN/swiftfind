@@ -2,6 +2,10 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.4] - 2026-05-11
+
+- Added `text replacement` functionality
+
 ## [0.1.3] - 2026-04-29
 
 - Added `Task Runner` explorer view in the SwiftFind sidebar, powered by workspace `tasks.json`.
