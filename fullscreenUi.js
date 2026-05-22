@@ -3,6 +3,8 @@ const path = require("path");
 const { searchByTab, openResult } = require("./searchEngine");
 const { isPolish } = require("./i18n");
 const { openReplacePanel } = require("./replaceUi");
+const { setLastSelection } = require("./uiSelectionState");
+const { getSidebarProvider } = require("./sidebarView");
 
 /**
  * @param {{query?:string, options?:{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} | string | undefined} payload
@@ -46,6 +48,30 @@ function openFullscreenSearch(payload) {
         scopePath: String(msg.scopePath || "")
       });
       panel.webview.postMessage({ type: "results", items, tab });
+      return;
+    }
+
+    if (msg.type === "select") {
+      setLastSelection({
+        tab: String(msg.tab || "text"),
+        query: String(msg.query || ""),
+        options: {
+          matchCase: Boolean(msg.matchCase),
+          wholeWord: Boolean(msg.wholeWord),
+          useRegex: Boolean(msg.useRegex),
+          fuzzy: Boolean(msg.fuzzy),
+          excludeGitIgnored: Boolean(msg.excludeGitIgnored),
+          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+          scopePath: String(msg.scopePath || "")
+        },
+        item: {
+          filePath: msg.filePath,
+          lineNumber: Number(msg.lineNumber || 0),
+          column: Number(msg.column || 1),
+          commandId: msg.commandId
+        }
+      });
+      getSidebarProvider()?.pushSelectionHighlight();
       return;
     }
 
@@ -156,6 +182,8 @@ function getHtml(initialQuery, initialOptions) {
     .folder { margin-top: 12px; font-weight: 600; opacity: 0.9; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 4px; }
     .row { padding: 7px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
     .row:hover { background: var(--vscode-list-hoverBackground); border-color: var(--vscode-list-hoverBackground); }
+    .row.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-list-activeSelectionBackground); }
+    .row.selected .meta, .row.selected .detail { color: inherit; opacity: 0.92; }
     .meta { opacity: 0.8; font-size: 12px; }
     .detail { font-family: var(--vscode-editor-font-family); font-size: 12px; opacity: 0.9; }
     #summary { position: sticky; top: 142px; z-index: 3; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
@@ -238,6 +266,50 @@ function getHtml(initialQuery, initialOptions) {
     let activeTab = "text";
     const tabOrder = ["files","folders","text","symbols","commands"];
     let ctxItem = null;
+    let lastSelectedKey = "";
+
+    function itemKey(it) {
+      if (!it) return "";
+      if (it.commandId) return "cmd:" + it.commandId;
+      const fp = String(it.filePath || "");
+      if (!fp) return "";
+      return fp + ":" + Number(it.lineNumber || 0) + ":" + Number(it.column || 1);
+    }
+
+    function searchOptionsPayload() {
+      return {
+        matchCase: !!matchCase.checked,
+        wholeWord: !!wholeWord.checked,
+        useRegex: !!useRegex.checked,
+        fuzzy: !!fuzzy.checked,
+        excludeGitIgnored: !!excludeGitIgnored.checked,
+        excludeSearchIgnored: !!excludeSearchIgnored.checked,
+        scopePath
+      };
+    }
+
+    function rememberSelection(it) {
+      lastSelectedKey = itemKey(it);
+      vscode.postMessage({
+        type: "select",
+        tab: activeTab,
+        query: q.value.trim(),
+        filePath: it.filePath,
+        lineNumber: it.lineNumber,
+        column: it.column,
+        commandId: it.commandId,
+        ...searchOptionsPayload()
+      });
+    }
+
+    function applySelectionToRows() {
+      if (!lastSelectedKey) return;
+      for (const row of out.querySelectorAll(".row")) {
+        row.classList.toggle("selected", row.dataset.key === lastSelectedKey);
+      }
+      const sel = out.querySelector(".row.selected");
+      if (sel) sel.scrollIntoView({ block: "nearest" });
+    }
 
     function refreshScopeInfo() {
       scopeInfo.textContent = scopePath ? "${L.scope}: " + scopePath : "";
@@ -331,6 +403,7 @@ function getHtml(initialQuery, initialOptions) {
           out.appendChild(h);
           for (const it of grouped.get(folder)) out.appendChild(rowFor(it));
         }
+        applySelectionToRows();
         return;
       }
 
@@ -341,15 +414,20 @@ function getHtml(initialQuery, initialOptions) {
       for (const it of items) {
         out.appendChild(rowFor(it));
       }
+      applySelectionToRows();
     }
 
     function rowFor(it) {
       const row = document.createElement("div");
       row.className = "row";
+      row.dataset.key = itemKey(it);
       const left = it.label || it.description || it.filePath || "";
       const right = it.description || it.filePath || "";
       row.innerHTML = '<div>' + esc(left) + '</div><div class="meta">' + esc(right) + '</div><div class="detail">' + esc(it.detail || "") + '</div>';
       row.addEventListener("click", () => {
+        rememberSelection(it);
+        for (const r of out.querySelectorAll(".row")) r.classList.remove("selected");
+        row.classList.add("selected");
         vscode.postMessage({
           type: "open",
           filePath: it.filePath,

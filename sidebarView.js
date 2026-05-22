@@ -2,6 +2,10 @@ const vscode = require("vscode");
 const path = require("path");
 const { searchByTab, openResult } = require("./searchEngine");
 const { isPolish } = require("./i18n");
+const { itemKey, setLastSelection, getLastSelection } = require("./uiSelectionState");
+
+/** @type {SwiftFindSidebarProvider | null} */
+let sidebarProviderInstance = null;
 
 class SwiftFindSidebarProvider {
   /**
@@ -9,19 +13,69 @@ class SwiftFindSidebarProvider {
    */
   constructor(extensionUri) {
     this.extensionUri = extensionUri;
+    /** @type {vscode.WebviewView | null} */
+    this._view = null;
+    sidebarProviderInstance = this;
+  }
+
+  pushSelectionHighlight() {
+    const sel = getLastSelection();
+    if (!sel?.item || !this._view) return;
+    this._view.webview.postMessage({
+      type: "syncSelection",
+      tab: sel.tab,
+      query: sel.query,
+      options: sel.options,
+      key: itemKey(sel.item),
+      item: sel.item
+    });
   }
 
   /**
    * @param {vscode.WebviewView} webviewView
    */
   resolveWebviewView(webviewView) {
+    this._view = webviewView;
     webviewView.webview.options = {
       enableScripts: true
     };
     webviewView.webview.html = this.getHtml();
+    if (getLastSelection()) {
+      queueMicrotask(() => {
+        if (webviewView.visible) this.pushSelectionHighlight();
+      });
+    }
+
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        this.pushSelectionHighlight();
+      }
+    });
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       if (!msg || !msg.type) return;
+
+      if (msg.type === "select") {
+        setLastSelection({
+          tab: String(msg.tab || "text"),
+          query: String(msg.query || ""),
+          options: {
+            matchCase: Boolean(msg.matchCase),
+            wholeWord: Boolean(msg.wholeWord),
+            useRegex: Boolean(msg.useRegex),
+            fuzzy: Boolean(msg.fuzzy),
+            excludeGitIgnored: Boolean(msg.excludeGitIgnored),
+            excludeSearchIgnored: Boolean(msg.excludeSearchIgnored)
+          },
+          item: {
+            filePath: msg.filePath,
+            lineNumber: Number(msg.lineNumber || 0),
+            column: Number(msg.column || 1),
+            commandId: msg.commandId
+          }
+        });
+        return;
+      }
 
       if (msg.type === "openQuick") {
         await vscode.commands.executeCommand("swiftFind.open");
@@ -203,6 +257,16 @@ class SwiftFindSidebarProvider {
       background: var(--vscode-list-hoverBackground);
       border-color: var(--vscode-list-hoverBackground);
     }
+    .row.selected {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+      border-color: var(--vscode-list-activeSelectionBackground);
+    }
+    .row.selected .d,
+    .row.selected .t {
+      color: inherit;
+      opacity: 0.92;
+    }
     .row .l { font-size: 12px; display: flex; gap: 6px; align-items: center; }
     .row .d { font-size: 11px; opacity: 0.75; }
     .row .t { font-size: 11px; opacity: 0.9; font-family: var(--vscode-editor-font-family); }
@@ -294,6 +358,73 @@ class SwiftFindSidebarProvider {
     let activeTab = "text";
     let timer;
     let ctxItem = null;
+    let lastSelectedKey = "";
+
+    function itemKey(item) {
+      if (!item) return "";
+      if (item.commandId) return "cmd:" + item.commandId;
+      const fp = String(item.filePath || "");
+      if (!fp) return "";
+      return fp + ":" + Number(item.lineNumber || 0) + ":" + Number(item.column || 1);
+    }
+
+    function applySelectionToRows() {
+      if (!lastSelectedKey) return;
+      for (const row of resultsEl.querySelectorAll(".row")) {
+        row.classList.toggle("selected", row.dataset.key === lastSelectedKey);
+      }
+      const sel = resultsEl.querySelector(".row.selected");
+      if (sel) sel.scrollIntoView({ block: "nearest" });
+    }
+
+    function rememberSelection(item) {
+      lastSelectedKey = itemKey(item);
+      vscode.postMessage({
+        type: "select",
+        tab: activeTab,
+        query: q.value.trim(),
+        filePath: item.filePath,
+        lineNumber: item.lineNumber,
+        column: item.column,
+        commandId: item.commandId,
+        matchCase: document.getElementById("matchCase").checked,
+        wholeWord: document.getElementById("wholeWord").checked,
+        useRegex: document.getElementById("useRegex").checked,
+        fuzzy: document.getElementById("fuzzy").checked,
+        excludeGitIgnored: document.getElementById("excludeGitIgnored").checked,
+        excludeSearchIgnored: document.getElementById("excludeSearchIgnored").checked
+      });
+    }
+
+    function syncFromHost(msg) {
+      if (msg.tab) {
+        activeTab = String(msg.tab);
+        for (const x of tabs.querySelectorAll(".tab")) {
+          x.classList.toggle("active", x.getAttribute("data-tab") === activeTab);
+        }
+      }
+      const opts = msg.options || {};
+      if (typeof opts.matchCase === "boolean") document.getElementById("matchCase").checked = opts.matchCase;
+      if (typeof opts.wholeWord === "boolean") document.getElementById("wholeWord").checked = opts.wholeWord;
+      if (typeof opts.useRegex === "boolean") document.getElementById("useRegex").checked = opts.useRegex;
+      if (typeof opts.fuzzy === "boolean") document.getElementById("fuzzy").checked = opts.fuzzy;
+      if (typeof opts.excludeGitIgnored === "boolean") {
+        document.getElementById("excludeGitIgnored").checked = opts.excludeGitIgnored;
+      }
+      if (typeof opts.excludeSearchIgnored === "boolean") {
+        document.getElementById("excludeSearchIgnored").checked = opts.excludeSearchIgnored;
+      }
+      if (msg.key) {
+        lastSelectedKey = String(msg.key);
+      }
+      const nextQuery = String(msg.query || "").trim();
+      if (nextQuery && q.value.trim() !== nextQuery) {
+        q.value = nextQuery;
+        searchNow();
+        return;
+      }
+      applySelectionToRows();
+    }
 
     function payload(type) {
       return {
@@ -328,6 +459,7 @@ class SwiftFindSidebarProvider {
     function row(item) {
       const div = document.createElement("div");
       div.className = "row";
+      div.dataset.key = itemKey(item);
       const lRaw = item.label || item.description || item.filePath || "";
       const l = cleanLabel(lRaw);
       const d = item.description || "";
@@ -338,6 +470,9 @@ class SwiftFindSidebarProvider {
         '<div class="d">' + highlight(d) + '</div>' +
         '<div class="t">' + highlight(t) + '</div>';
       div.addEventListener("click", () => {
+        rememberSelection(item);
+        for (const r of resultsEl.querySelectorAll(".row")) r.classList.remove("selected");
+        div.classList.add("selected");
         vscode.postMessage({
           type: "openResult",
           filePath: item.filePath,
@@ -366,6 +501,10 @@ class SwiftFindSidebarProvider {
 
     window.addEventListener("message", (e) => {
       const msg = e.data || {};
+      if (msg.type === "syncSelection") {
+        syncFromHost(msg);
+        return;
+      }
       if (msg.type !== "results") return;
       const items = Array.isArray(msg.items) ? msg.items : [];
       resultsEl.innerHTML = "";
@@ -394,12 +533,14 @@ class SwiftFindSidebarProvider {
           resultsEl.appendChild(section(folder));
           for (const item of grouped.get(folder)) resultsEl.appendChild(row(item));
         }
+        applySelectionToRows();
         return;
       }
 
       for (const item of renderItems) {
         resultsEl.appendChild(row(item));
       }
+      applySelectionToRows();
     });
 
     tabs.addEventListener("click", (e) => {
@@ -507,5 +648,9 @@ class SwiftFindSidebarProvider {
   }
 }
 
-module.exports = { SwiftFindSidebarProvider };
+function getSidebarProvider() {
+  return sidebarProviderInstance;
+}
+
+module.exports = { SwiftFindSidebarProvider, getSidebarProvider };
 

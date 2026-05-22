@@ -2,6 +2,12 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.5] - 2026-05-22
+
+- Synced last selected search result between fullscreen results and the SwiftFind sidebar panel.
+- Highlighted the active result row in both fullscreen and sidebar lists using VS Code list selection styling.
+- Restored sidebar query, tab, and filter options when returning from fullscreen with a prior selection.
+
 ## [0.1.4] - 2026-05-11
 
 - Added `text replacement` functionality
