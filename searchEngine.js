@@ -34,8 +34,97 @@ function getDefaultSearchOptions() {
     useRegex: false,
     fuzzy: false,
     excludeGitIgnored: true,
-    excludeSearchIgnored: true
+    excludeSearchIgnored: true,
+    showClassContext: false
   };
+}
+
+/** @type {Set<number>} */
+const CLASS_LIKE_SYMBOL_KINDS = new Set([
+  vscode.SymbolKind.Class,
+  vscode.SymbolKind.Interface,
+  vscode.SymbolKind.Struct,
+  vscode.SymbolKind.Enum
+]);
+
+/**
+ * @param {number | undefined} kind
+ */
+function isClassLikeSymbolKind(kind) {
+  return CLASS_LIKE_SYMBOL_KINDS.has(Number(kind));
+}
+
+/**
+ * @param {vscode.DocumentSymbol[] | undefined} symbols
+ * @param {number} line0
+ * @returns {string}
+ */
+function findEnclosingClassName(symbols, line0) {
+  if (!Array.isArray(symbols)) return "";
+  for (const sym of symbols) {
+    const start = sym.range?.start?.line ?? 0;
+    const end = sym.range?.end?.line ?? start;
+    if (line0 < start || line0 > end) continue;
+    const nested = findEnclosingClassName(sym.children || [], line0);
+    if (nested) return nested;
+    if (isClassLikeSymbolKind(sym.kind)) {
+      return String(sym.name || "").trim();
+    }
+  }
+  return "";
+}
+
+/**
+ * @param {string} rootPath
+ * @param {string} relPath
+ * @param {Map<string, vscode.DocumentSymbol[]>} cache
+ */
+async function getDocumentSymbols(rootPath, relPath, cache) {
+  const key = String(relPath || "").replaceAll("\\", "/");
+  if (cache.has(key)) return cache.get(key) || [];
+  const uri = vscode.Uri.file(path.join(rootPath, key));
+  try {
+    /** @type {vscode.DocumentSymbol[] | undefined} */
+    const symbols = await vscode.commands.executeCommand("vscode.executeDocumentSymbolProvider", uri);
+    const val = Array.isArray(symbols) ? symbols : [];
+    cache.set(key, val);
+    return val;
+  } catch {
+    cache.set(key, []);
+    return [];
+  }
+}
+
+/**
+ * @param {SearchItem[]} items
+ * @returns {Promise<SearchItem[]>}
+ */
+async function enrichTextResultsWithClassContext(items) {
+  const rootPath = getRootPath();
+  if (!rootPath || !items.length) return items;
+
+  /** @type {Map<string, vscode.DocumentSymbol[]>} */
+  const cache = new Map();
+  const uniqueFiles = [
+    ...new Set(
+      items
+        .filter((item) => !item.alwaysShow && item.filePath && item.lineNumber)
+        .map((item) => String(item.filePath).replaceAll("\\", "/"))
+    )
+  ];
+  await Promise.all(uniqueFiles.map((filePath) => getDocumentSymbols(rootPath, filePath, cache)));
+
+  return items.map((item) => {
+    if (item.alwaysShow || !item.filePath || !item.lineNumber) return item;
+    const fileKey = String(item.filePath).replaceAll("\\", "/");
+    const symbols = cache.get(fileKey) || [];
+    const className = findEnclosingClassName(symbols, Math.max(0, Number(item.lineNumber) - 1));
+    if (!className) return item;
+    return {
+      ...item,
+      className
+    };
+  });
 }
 
 function quoteArg(arg) {
@@ -581,7 +670,11 @@ async function searchByTab(tab, query, options) {
 
   if (normalizedTab === "files") return scoped(await searchFiles(q, max, opts));
   if (normalizedTab === "folders") return scoped(await searchFolders(q, max, opts));
-  if (normalizedTab === "text") return scoped(await search(q, opts));
+  if (normalizedTab === "text") {
+    const textItems = scoped(await search(q, opts));
+    if (!opts.showClassContext) return textItems;
+    return enrichTextResultsWithClassContext(textItems);
+  }
   if (normalizedTab === "symbols") return scoped(await searchSymbols(q, max, opts));
   if (normalizedTab === "commands") return scoped(await searchCommands(q, max, opts));
 

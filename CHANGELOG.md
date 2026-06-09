@@ -2,6 +2,13 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.6] - 2026-05-22
+
+- Added optional **Show Class** toggle for text search (sidebar, fullscreen, and QuickPick).
+- When enabled, text results show the enclosing class, interface, struct, or enum from document symbols.
+- Class names are rendered in bold next to the file path in fullscreen and sidebar result lists.
+- Added Alt+K shortcut for the class context toggle in fullscreen search.
+
 ## [0.1.5] - 2026-05-22
 
 - Synced last selected search result between fullscreen results and the SwiftFind sidebar panel.

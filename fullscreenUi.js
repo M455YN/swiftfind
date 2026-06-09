@@ -21,6 +21,7 @@ function openFullscreenSearch(payload) {
           fuzzy: Boolean(payload?.options?.fuzzy),
           excludeGitIgnored: payload?.options?.excludeGitIgnored !== false,
           excludeSearchIgnored: payload?.options?.excludeSearchIgnored !== false,
+          showClassContext: Boolean(payload?.options?.showClassContext),
           scopePath: String(payload?.options?.scopePath || "")
         };
   const panel = vscode.window.createWebviewPanel(
@@ -45,6 +46,7 @@ function openFullscreenSearch(payload) {
         fuzzy: Boolean(msg.fuzzy),
         excludeGitIgnored: Boolean(msg.excludeGitIgnored),
         excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+        showClassContext: Boolean(msg.showClassContext),
         scopePath: String(msg.scopePath || "")
       });
       panel.webview.postMessage({ type: "results", items, tab });
@@ -62,6 +64,7 @@ function openFullscreenSearch(payload) {
           fuzzy: Boolean(msg.fuzzy),
           excludeGitIgnored: Boolean(msg.excludeGitIgnored),
           excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+          showClassContext: Boolean(msg.showClassContext),
           scopePath: String(msg.scopePath || "")
         },
         item: {
@@ -136,6 +139,7 @@ function getHtml(initialQuery, initialOptions) {
     fuzzy: pl ? "Fuzzy" : "Fuzzy",
     exclGit: pl ? "Pomin Git Ignored" : "Exclude Git Ignored",
     exclSearch: pl ? "Pomin .searchignore" : "Exclude Search Ignored",
+    showClass: pl ? "Pokaz klase" : "Show Class",
     results: pl ? "wynikow" : "results",
     scope: pl ? "Zakres" : "Scope",
     clearScope: pl ? "Wyczyść zakres" : "Clear Scope",
@@ -185,6 +189,7 @@ function getHtml(initialQuery, initialOptions) {
     .row.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-list-activeSelectionBackground); }
     .row.selected .meta, .row.selected .detail { color: inherit; opacity: 0.92; }
     .meta { opacity: 0.8; font-size: 12px; }
+    .meta .class-name { font-weight: 600; opacity: 1; }
     .detail { font-family: var(--vscode-editor-font-family); font-size: 12px; opacity: 0.9; }
     #summary { position: sticky; top: 142px; z-index: 3; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
     .ctx {
@@ -236,6 +241,7 @@ function getHtml(initialQuery, initialOptions) {
       <label><input id="fuzzy" type="checkbox" ${initialOptions.fuzzy ? "checked" : ""} /> ${L.fuzzy} (Alt+F)</label>
       <label><input id="excludeGitIgnored" type="checkbox" ${initialOptions.excludeGitIgnored ? "checked" : ""} /> ${L.exclGit} (Alt+G)</label>
       <label><input id="excludeSearchIgnored" type="checkbox" ${initialOptions.excludeSearchIgnored ? "checked" : ""} /> ${L.exclSearch} (Alt+S)</label>
+      <label><input id="showClassContext" type="checkbox" ${initialOptions.showClassContext ? "checked" : ""} /> ${L.showClass} (Alt+K)</label>
     </div>
     <div class="scopebar">
       <div id="scopeInfo"></div>
@@ -260,6 +266,7 @@ function getHtml(initialQuery, initialOptions) {
     const fuzzy = document.getElementById("fuzzy");
     const excludeGitIgnored = document.getElementById("excludeGitIgnored");
     const excludeSearchIgnored = document.getElementById("excludeSearchIgnored");
+    const showClassContext = document.getElementById("showClassContext");
     const scopeInfo = document.getElementById("scopeInfo");
     const clearScopeBtn = document.getElementById("clearScope");
     let scopePath = ${JSON.stringify(initialOptions.scopePath || "")};
@@ -284,6 +291,7 @@ function getHtml(initialQuery, initialOptions) {
         fuzzy: !!fuzzy.checked,
         excludeGitIgnored: !!excludeGitIgnored.checked,
         excludeSearchIgnored: !!excludeSearchIgnored.checked,
+        showClassContext: !!showClassContext.checked,
         scopePath
       };
     }
@@ -330,6 +338,7 @@ function getHtml(initialQuery, initialOptions) {
         fuzzy: !!fuzzy.checked,
         excludeGitIgnored: !!excludeGitIgnored.checked,
         excludeSearchIgnored: !!excludeSearchIgnored.checked,
+        showClassContext: !!showClassContext.checked,
         scopePath
       });
     }
@@ -342,6 +351,7 @@ function getHtml(initialQuery, initialOptions) {
     fuzzy.addEventListener("change", run);
     excludeGitIgnored.addEventListener("change", run);
     excludeSearchIgnored.addEventListener("change", run);
+    showClassContext.addEventListener("change", run);
     clearScopeBtn.addEventListener("click", () => {
       scopePath = "";
       refreshScopeInfo();
@@ -422,8 +432,7 @@ function getHtml(initialQuery, initialOptions) {
       row.className = "row";
       row.dataset.key = itemKey(it);
       const left = it.label || it.description || it.filePath || "";
-      const right = it.description || it.filePath || "";
-      row.innerHTML = '<div>' + esc(left) + '</div><div class="meta">' + esc(right) + '</div><div class="detail">' + esc(it.detail || "") + '</div>';
+      row.innerHTML = '<div>' + esc(left) + '</div><div class="meta">' + formatMeta(it) + '</div><div class="detail">' + esc(it.detail || "") + '</div>';
       row.addEventListener("click", () => {
         rememberSelection(it);
         for (const r of out.querySelectorAll(".row")) r.classList.remove("selected");
@@ -482,10 +491,17 @@ function getHtml(initialQuery, initialOptions) {
         if (k === "f") { fuzzy.checked = !fuzzy.checked; run(); }
         if (k === "g") { excludeGitIgnored.checked = !excludeGitIgnored.checked; run(); }
         if (k === "s") { excludeSearchIgnored.checked = !excludeSearchIgnored.checked; run(); }
+        if (k === "k") { showClassContext.checked = !showClassContext.checked; run(); }
       }
     });
 
     function esc(s){ return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+
+    function formatMeta(it) {
+      const filePath = String(it.filePath || it.description || "");
+      if (!it.className) return esc(filePath);
+      return esc(filePath) + ' · <strong class="class-name">' + esc(it.className) + "</strong>";
+    }
     refreshScopeInfo();
     if (q.value.trim()) run();
   </script>

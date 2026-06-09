@@ -16,7 +16,8 @@ let searchOptions = {
   useRegex: false,
   fuzzy: false,
   excludeGitIgnored: true,
-  excludeSearchIgnored: true
+  excludeSearchIgnored: true,
+  showClassContext: false
 };
 let activeTab = "text";
 let activeQuickPick = null;
@@ -126,6 +127,13 @@ function buildButtons() {
       toggle: toggle(searchOptions.excludeSearchIgnored)
     },
     {
+      key: "show-class",
+      iconPath: new vscode.ThemeIcon("symbol-class", searchOptions.showClassContext ? activeColor : undefined),
+      tooltip: t("Show enclosing class", "Pokaz klase otaczajaca") + ` (Alt+K): ${searchOptions.showClassContext ? "ON" : "OFF"}`,
+      location: inlineLocation,
+      toggle: toggle(searchOptions.showClassContext)
+    },
+    {
       key: "screen-full",
       iconPath: new vscode.ThemeIcon("screen-full"),
       tooltip: t("Open fullscreen results", "Otworz pelnoekranowe wyniki"),
@@ -175,7 +183,11 @@ function openQuickSearch() {
     quickPick.busy = true;
     quickPick.items = [{ label: t("Loading...", "Ladowanie..."), alwaysShow: true }];
     const items = await searchByTab(activeTab, value, searchOptions);
-    const grouped = items;
+    const grouped = items.map((item) => {
+      if (!item.className) return item;
+      const base = item.filePath || item.description || "";
+      return { ...item, description: `${base} · ${item.className}` };
+    });
     cacheValue = value;
     cacheItems = grouped;
     quickPick.items = grouped;
@@ -273,6 +285,13 @@ function openQuickSearch() {
       if (quickPick.value) await updateItems(quickPick.value);
       return;
     }
+    if (key === "show-class") {
+      searchOptions.showClassContext = !searchOptions.showClassContext;
+      quickPick.buttons = buildButtons();
+      documentUpdated = true;
+      if (quickPick.value) await updateItems(quickPick.value);
+      return;
+    }
     if (key === "screen-full") {
       await openFullscreenResults(quickPick.value);
     }
@@ -315,6 +334,7 @@ function toggleOption(key) {
   if (key === "fuzzy") searchOptions.fuzzy = !searchOptions.fuzzy;
   if (key === "excludeGit") searchOptions.excludeGitIgnored = !searchOptions.excludeGitIgnored;
   if (key === "excludeSearchIgnore") searchOptions.excludeSearchIgnored = !searchOptions.excludeSearchIgnored;
+  if (key === "showClass") searchOptions.showClassContext = !searchOptions.showClassContext;
   refreshActiveQuickPick();
 }
 

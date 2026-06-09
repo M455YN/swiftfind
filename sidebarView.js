@@ -65,7 +65,8 @@ class SwiftFindSidebarProvider {
             useRegex: Boolean(msg.useRegex),
             fuzzy: Boolean(msg.fuzzy),
             excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-            excludeSearchIgnored: Boolean(msg.excludeSearchIgnored)
+            excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+            showClassContext: Boolean(msg.showClassContext)
           },
           item: {
             filePath: msg.filePath,
@@ -91,7 +92,8 @@ class SwiftFindSidebarProvider {
             useRegex: Boolean(msg.useRegex),
             fuzzy: Boolean(msg.fuzzy),
             excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-            excludeSearchIgnored: Boolean(msg.excludeSearchIgnored)
+            excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+            showClassContext: Boolean(msg.showClassContext)
           }
         });
         return;
@@ -106,7 +108,8 @@ class SwiftFindSidebarProvider {
           useRegex: Boolean(msg.useRegex),
           fuzzy: Boolean(msg.fuzzy),
           excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored)
+          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+          showClassContext: Boolean(msg.showClassContext)
         });
         webviewView.webview.postMessage({ type: "results", items });
         return;
@@ -155,6 +158,7 @@ class SwiftFindSidebarProvider {
       fuzzy: "Fuzzy",
       exclGit: pl ? "Pomin Git Ignored" : "Exclude Git Ignored",
       exclSearch: pl ? "Pomin .searchignore" : "Exclude Search Ignored",
+      showClass: pl ? "Pokaz klase" : "Show Class",
       helper: pl ? "Wpisz fraze, aby wyszukac wyniki w panelu bocznym." : "Type query to search sidebar results.",
       searching: pl ? "Wyszukiwanie..." : "Searching...",
       results: pl ? "wynikow" : "results"
@@ -269,6 +273,7 @@ class SwiftFindSidebarProvider {
     }
     .row .l { font-size: 12px; display: flex; gap: 6px; align-items: center; }
     .row .d { font-size: 11px; opacity: 0.75; }
+    .row .d .class-name { font-weight: 600; opacity: 1; }
     .row .t { font-size: 11px; opacity: 0.9; font-family: var(--vscode-editor-font-family); }
     .ico {
       width: 14px;
@@ -340,6 +345,7 @@ class SwiftFindSidebarProvider {
       <label><input id="fuzzy" type="checkbox" /> Fuzzy</label>
       <label><input id="excludeGitIgnored" type="checkbox" checked /> ${L.exclGit}</label>
       <label><input id="excludeSearchIgnored" type="checkbox" checked /> ${L.exclSearch}</label>
+      <label><input id="showClassContext" type="checkbox" /> ${L.showClass}</label>
     </div>
     <div class="muted" id="meta">${L.helper}</div>
     <div id="results" class="results"></div>
@@ -392,7 +398,8 @@ class SwiftFindSidebarProvider {
         useRegex: document.getElementById("useRegex").checked,
         fuzzy: document.getElementById("fuzzy").checked,
         excludeGitIgnored: document.getElementById("excludeGitIgnored").checked,
-        excludeSearchIgnored: document.getElementById("excludeSearchIgnored").checked
+        excludeSearchIgnored: document.getElementById("excludeSearchIgnored").checked,
+        showClassContext: document.getElementById("showClassContext").checked
       });
     }
 
@@ -413,6 +420,9 @@ class SwiftFindSidebarProvider {
       }
       if (typeof opts.excludeSearchIgnored === "boolean") {
         document.getElementById("excludeSearchIgnored").checked = opts.excludeSearchIgnored;
+      }
+      if (typeof opts.showClassContext === "boolean") {
+        document.getElementById("showClassContext").checked = opts.showClassContext;
       }
       if (msg.key) {
         lastSelectedKey = String(msg.key);
@@ -436,7 +446,8 @@ class SwiftFindSidebarProvider {
         useRegex: document.getElementById("useRegex").checked,
         fuzzy: document.getElementById("fuzzy").checked,
         excludeGitIgnored: document.getElementById("excludeGitIgnored").checked,
-        excludeSearchIgnored: document.getElementById("excludeSearchIgnored").checked
+        excludeSearchIgnored: document.getElementById("excludeSearchIgnored").checked,
+        showClassContext: document.getElementById("showClassContext").checked
       };
     }
 
@@ -462,12 +473,11 @@ class SwiftFindSidebarProvider {
       div.dataset.key = itemKey(item);
       const lRaw = item.label || item.description || item.filePath || "";
       const l = cleanLabel(lRaw);
-      const d = item.description || "";
       const t = item.detail || "";
       const icon = iconFor(item);
       div.innerHTML =
         '<div class="l"><span class="ico">' + icon + '</span><span>' + highlight(l) + '</span></div>' +
-        '<div class="d">' + highlight(d) + '</div>' +
+        '<div class="d">' + formatDescription(item) + '</div>' +
         '<div class="t">' + highlight(t) + '</div>';
       div.addEventListener("click", () => {
         rememberSelection(item);
@@ -564,7 +574,7 @@ class SwiftFindSidebarProvider {
     full.addEventListener("click", () => vscode.postMessage(payload("openFullscreen")));
     q.addEventListener("keydown", (e) => { if (e.key === "Enter") searchNow(); });
     q.addEventListener("input", scheduleSearch);
-    ["matchCase","wholeWord","useRegex","fuzzy","excludeGitIgnored","excludeSearchIgnored"].forEach((id) => {
+    ["matchCase","wholeWord","useRegex","fuzzy","excludeGitIgnored","excludeSearchIgnored","showClassContext"].forEach((id) => {
       document.getElementById(id).addEventListener("change", searchNow);
     });
 
@@ -611,6 +621,13 @@ class SwiftFindSidebarProvider {
     }
     function iconDot() {
       return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/></svg>';
+    }
+
+    function formatDescription(item) {
+      const filePath = String(item.filePath || item.description || "");
+      const pathHtml = highlight(filePath);
+      if (!item.className) return pathHtml;
+      return pathHtml + ' · <strong class="class-name">' + esc(item.className) + "</strong>";
     }
 
     function highlight(text) {
