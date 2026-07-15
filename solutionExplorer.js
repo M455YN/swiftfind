@@ -9,7 +9,7 @@ class SolutionNode extends vscode.TreeItem {
    * @param {string} rootPath
    * @param {string} iconDir
    */
-  constructor(absPath, isDirectory, rootPath, iconDir, fallbackIconDir) {
+  constructor(absPath, isDirectory, rootPath, iconDir) {
     const rel = path.relative(rootPath, absPath).replaceAll("\\", "/");
     super(
       path.basename(absPath) || rel || absPath,
@@ -20,7 +20,7 @@ class SolutionNode extends vscode.TreeItem {
     this.isDirectory = isDirectory;
     this.contextValue = isDirectory ? "swiftFind.folderNode" : "swiftFind.fileNode";
     this.resourceUri = vscode.Uri.file(absPath);
-    this.iconPath = getIconPath(absPath, isDirectory, iconDir, fallbackIconDir);
+    this.iconPath = getIconPath(absPath, isDirectory, iconDir);
     this.description = rel && rel !== this.label ? rel : undefined;
     this.command = isDirectory
       ? undefined

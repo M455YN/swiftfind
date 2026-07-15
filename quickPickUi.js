@@ -2,9 +2,7 @@ const vscode = require("vscode");
 const { getConfig, searchByTab, openResult } = require("./searchEngine");
 const { t } = require("./i18n");
 
-/**
- * @typedef {import("./searchEngine").SearchItem} SearchItem
- */
+/** @typedef {import("./searchEngine").SearchItem} SearchItem */
 
 let cacheValue = "";
 /** @type {SearchItem[]} */ let cacheItems = [];
@@ -21,6 +19,39 @@ let searchOptions = {
 let activeTab = "text";
 let activeQuickPick = null;
 let lastUpdateFn = null;
+
+const TABS = ["files", "folders", "text", "symbols", "commands"];
+const TAB_LABELS = {
+  files: () => t("Files", "Pliki"),
+  folders: () => t("Folders", "Foldery"),
+  text: () => t("Text", "Tekst"),
+  symbols: () => t("Symbols", "Symbole"),
+  commands: () => t("Commands", "Polecenia")
+};
+const OPTION_KEYS = {
+  "case-sensitive": "matchCase",
+  "whole-word": "wholeWord",
+  regex: "useRegex",
+  fuzzy: "fuzzy",
+  "exclude-git": "excludeGitIgnored",
+  "exclude-searchignore": "excludeSearchIgnored"
+};
+const OPTION_BUTTON_KEYS = {
+  matchCase: "case-sensitive",
+  wholeWord: "whole-word",
+  useRegex: "regex",
+  fuzzy: "fuzzy",
+  excludeGitIgnored: "exclude-git",
+  excludeSearchIgnored: "exclude-searchignore"
+};
+const OPTION_META = {
+  matchCase: { icon: "case-sensitive", label: () => t("Match Case", "Uwzgledniaj wielkosc liter"), shortcut: "Alt+C" },
+  wholeWord: { icon: "whole-word", label: () => t("Match Whole Word", "Dopasuj cale slowo"), shortcut: "Alt+W" },
+  useRegex: { icon: "regex", label: () => t("Use Regular Expression", "Uzyj wyrazenia regularnego"), shortcut: "Alt+R" },
+  fuzzy: { icon: "sparkle", label: () => t("Fuzzy Search", "Wyszukiwanie fuzzy"), shortcut: "Alt+F" },
+  excludeGitIgnored: { icon: "repo", label: () => t("Exclude Git Ignored", "Pomin pliki ignorowane przez Git"), shortcut: "Alt+G" },
+  excludeSearchIgnored: { icon: "filter", label: () => t("Exclude Search Ignored", "Pomin pliki z .searchignore"), shortcut: "Alt+S" }
+};
 
 function markDirty() {
   documentUpdated = true;
@@ -46,105 +77,43 @@ function buildButtons() {
   const activeColor = new vscode.ThemeColor("textLink.foreground");
   const titleLocation = vscode.QuickInputButtonLocation?.Title;
   const inlineLocation = vscode.QuickInputButtonLocation?.Inline;
-  const toggle = (checked) => ({ checked });
+  const btn = (key, icon, tooltip, location, checked) => ({
+    key,
+    iconPath: new vscode.ThemeIcon(icon, checked ? activeColor : undefined),
+    tooltip,
+    location,
+    toggle: checked !== undefined ? { checked } : undefined
+  });
+
+  const tabButtons = TABS.map((tab) =>
+    btn(`tab-${tab}`, tab === "files" ? "file" : tab === "folders" ? "folder" : tab === "text" ? "symbol-text" : tab === "symbols" ? "symbol-class" : "terminal", TAB_LABELS[tab](), titleLocation, activeTab === tab)
+  );
+  const optionButtons = Object.entries(OPTION_META).map(([key, meta]) =>
+    btn(
+      OPTION_BUTTON_KEYS[key],
+      meta.icon,
+      `${meta.label()} (${meta.shortcut}): ${searchOptions[key] ? "ON" : "OFF"}`,
+      inlineLocation,
+      searchOptions[key]
+    )
+  );
   return [
-    {
-      key: "tab-files",
-      iconPath: new vscode.ThemeIcon("file", activeTab === "files" ? activeColor : undefined),
-      tooltip: t("Files", "Pliki"),
-      location: titleLocation,
-      toggle: toggle(activeTab === "files")
-    },
-    {
-      key: "tab-folders",
-      iconPath: new vscode.ThemeIcon("folder", activeTab === "folders" ? activeColor : undefined),
-      tooltip: t("Folders", "Foldery"),
-      location: titleLocation,
-      toggle: toggle(activeTab === "folders")
-    },
-    {
-      key: "tab-text",
-      iconPath: new vscode.ThemeIcon("symbol-text", activeTab === "text" ? activeColor : undefined),
-      tooltip: t("Text", "Tekst"),
-      location: titleLocation,
-      toggle: toggle(activeTab === "text")
-    },
-    {
-      key: "tab-symbols",
-      iconPath: new vscode.ThemeIcon("symbol-class", activeTab === "symbols" ? activeColor : undefined),
-      tooltip: t("Symbols", "Symbole"),
-      location: titleLocation,
-      toggle: toggle(activeTab === "symbols")
-    },
-    {
-      key: "tab-commands",
-      iconPath: new vscode.ThemeIcon("terminal", activeTab === "commands" ? activeColor : undefined),
-      tooltip: t("Commands", "Polecenia"),
-      location: titleLocation,
-      toggle: toggle(activeTab === "commands")
-    },
-    {
-      key: "case-sensitive",
-      iconPath: new vscode.ThemeIcon("case-sensitive", searchOptions.matchCase ? activeColor : undefined),
-      tooltip: t("Match Case", "Uwzgledniaj wielkosc liter") + ` (Alt+C): ${searchOptions.matchCase ? "ON" : "OFF"}`,
-      location: inlineLocation,
-      toggle: toggle(searchOptions.matchCase)
-    },
-    {
-      key: "whole-word",
-      iconPath: new vscode.ThemeIcon("whole-word", searchOptions.wholeWord ? activeColor : undefined),
-      tooltip: t("Match Whole Word", "Dopasuj cale slowo") + ` (Alt+W): ${searchOptions.wholeWord ? "ON" : "OFF"}`,
-      location: inlineLocation,
-      toggle: toggle(searchOptions.wholeWord)
-    },
-    {
-      key: "regex",
-      iconPath: new vscode.ThemeIcon("regex", searchOptions.useRegex ? activeColor : undefined),
-      tooltip: t("Use Regular Expression", "Uzyj wyrazenia regularnego") + ` (Alt+R): ${searchOptions.useRegex ? "ON" : "OFF"}`,
-      location: inlineLocation,
-      toggle: toggle(searchOptions.useRegex)
-    },
-    {
-      key: "fuzzy",
-      iconPath: new vscode.ThemeIcon("sparkle", searchOptions.fuzzy ? activeColor : undefined),
-      tooltip: t("Fuzzy Search", "Wyszukiwanie fuzzy") + ` (Alt+F): ${searchOptions.fuzzy ? "ON" : "OFF"}`,
-      location: inlineLocation,
-      toggle: toggle(searchOptions.fuzzy)
-    },
-    {
-      key: "exclude-git",
-      iconPath: new vscode.ThemeIcon("repo", searchOptions.excludeGitIgnored ? activeColor : undefined),
-      tooltip: t("Exclude Git Ignored", "Pomin pliki ignorowane przez Git") + ` (Alt+G): ${searchOptions.excludeGitIgnored ? "ON" : "OFF"}`,
-      location: inlineLocation,
-      toggle: toggle(searchOptions.excludeGitIgnored)
-    },
-    {
-      key: "exclude-searchignore",
-      iconPath: new vscode.ThemeIcon("filter", searchOptions.excludeSearchIgnored ? activeColor : undefined),
-      tooltip: t("Exclude Search Ignored", "Pomin pliki z .searchignore") + ` (Alt+S): ${searchOptions.excludeSearchIgnored ? "ON" : "OFF"}`,
-      location: inlineLocation,
-      toggle: toggle(searchOptions.excludeSearchIgnored)
-    },
-    {
-      key: "screen-full",
-      iconPath: new vscode.ThemeIcon("screen-full"),
-      tooltip: t("Open fullscreen results", "Otworz pelnoekranowe wyniki"),
-      location: titleLocation
-    }
+    ...tabButtons,
+    ...optionButtons,
+    btn("screen-full", "screen-full", t("Open fullscreen results", "Otworz pelnoekranowe wyniki"), titleLocation)
   ];
 }
 
 function setQuickPickTitle(quickPick, count) {
-  const tabName = {
-    files: t("Files", "Pliki"),
-    folders: t("Folders", "Foldery"),
-    text: t("Text", "Tekst"),
-    symbols: t("Symbols", "Symbole"),
-    commands: t("Commands", "Polecenia")
-  }[activeTab] || activeTab;
-  const resultsPart =
-    typeof count === "number" ? `: ${count} ${t("results", "wynikow")}` : "";
+  const tabName = TAB_LABELS[activeTab]?.() || activeTab;
+  const resultsPart = typeof count === "number" ? `: ${count} ${t("results", "wynikow")}` : "";
   quickPick.title = `${tabName}${resultsPart}`;
+}
+
+async function refreshSearch(quickPick, updateItems, value) {
+  documentUpdated = true;
+  if (value) await updateItems(value);
+  else setQuickPickTitle(quickPick);
 }
 
 function openQuickSearch() {
@@ -163,11 +132,8 @@ function openQuickSearch() {
     quickPick.activeItems = cacheActiveItems;
   }
 
-  const activeEditor = vscode.window.activeTextEditor;
-  if (activeEditor) {
-    const selected = activeEditor.document.getText(activeEditor.selection);
-    if (selected) quickPick.value = selected;
-  }
+  const selected = vscode.window.activeTextEditor?.document.getText(vscode.window.activeTextEditor.selection);
+  if (selected) quickPick.value = selected;
 
   const updateItems = debounce(180, async (value) => {
     if (!documentUpdated && cacheValue === value) return;
@@ -175,11 +141,10 @@ function openQuickSearch() {
     quickPick.busy = true;
     quickPick.items = [{ label: t("Loading...", "Ladowanie..."), alwaysShow: true }];
     const items = await searchByTab(activeTab, value, searchOptions);
-    const grouped = items;
     cacheValue = value;
-    cacheItems = grouped;
-    quickPick.items = grouped;
-    setQuickPickTitle(quickPick, grouped.length);
+    cacheItems = items;
+    quickPick.items = items;
+    setQuickPickTitle(quickPick, items.length);
     quickPick.busy = false;
   });
   lastUpdateFn = updateItems;
@@ -197,85 +162,34 @@ function openQuickSearch() {
     if (!item) return;
     if (item.commandId) {
       await vscode.commands.executeCommand(String(item.commandId));
-      quickPick.hide();
+    } else if (item.filePath) {
+      await openResult(item, false);
+    } else {
       return;
     }
-    if (!item.filePath) return;
-    await openResult(item, false);
     quickPick.hide();
   });
 
   quickPick.onDidChangeActive(async (items) => {
     cacheActiveItems = items;
-    if (getConfig().preview && items.length && items[0].filePath) {
-      await openResult(items[0], true);
-    }
+    if (getConfig().preview && items[0]?.filePath) await openResult(items[0], true);
   });
 
   quickPick.onDidTriggerButton(async (button) => {
     const key = button?.key;
     if (key?.startsWith("tab-")) {
-      activeTab = key.replace("tab-", "");
+      activeTab = key.slice(4);
       quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) {
-        await updateItems(quickPick.value);
-      } else {
-        setQuickPickTitle(quickPick);
-      }
+      await refreshSearch(quickPick, updateItems, quickPick.value);
       return;
     }
-    if (key === "case-sensitive") {
-      searchOptions.matchCase = !searchOptions.matchCase;
+    if (OPTION_KEYS[key]) {
+      searchOptions[OPTION_KEYS[key]] = !searchOptions[OPTION_KEYS[key]];
       quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) {
-        await updateItems(quickPick.value);
-      }
+      await refreshSearch(quickPick, updateItems, quickPick.value);
       return;
     }
-    if (key === "whole-word") {
-      searchOptions.wholeWord = !searchOptions.wholeWord;
-      quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) {
-        await updateItems(quickPick.value);
-      }
-      return;
-    }
-    if (key === "regex") {
-      searchOptions.useRegex = !searchOptions.useRegex;
-      quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) {
-        await updateItems(quickPick.value);
-      }
-      return;
-    }
-    if (key === "fuzzy") {
-      searchOptions.fuzzy = !searchOptions.fuzzy;
-      quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) await updateItems(quickPick.value);
-      return;
-    }
-    if (key === "exclude-git") {
-      searchOptions.excludeGitIgnored = !searchOptions.excludeGitIgnored;
-      quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) await updateItems(quickPick.value);
-      return;
-    }
-    if (key === "exclude-searchignore") {
-      searchOptions.excludeSearchIgnored = !searchOptions.excludeSearchIgnored;
-      quickPick.buttons = buildButtons();
-      documentUpdated = true;
-      if (quickPick.value) await updateItems(quickPick.value);
-      return;
-    }
-    if (key === "screen-full") {
-      await openFullscreenResults(quickPick.value);
-    }
+    if (key === "screen-full") await openFullscreenResults(quickPick.value);
   });
 
   quickPick.show();
@@ -289,32 +203,27 @@ function openQuickSearch() {
 
 async function refreshActiveQuickPick() {
   if (!activeQuickPick || !lastUpdateFn) return;
-  const value = activeQuickPick.value || "";
   activeQuickPick.buttons = buildButtons();
-  if (value) {
-    documentUpdated = true;
-    await lastUpdateFn(value);
-  }
+  await refreshSearch(activeQuickPick, lastUpdateFn, activeQuickPick.value || "");
 }
 
 function shiftTab(step) {
-  const tabs = ["files", "folders", "text", "symbols", "commands"];
-  const i = tabs.indexOf(activeTab);
-  const next = (i + step + tabs.length) % tabs.length;
-  activeTab = tabs[next];
-  if (activeQuickPick) {
-    setQuickPickTitle(activeQuickPick);
-  }
+  activeTab = TABS[(TABS.indexOf(activeTab) + step + TABS.length) % TABS.length];
+  if (activeQuickPick) setQuickPickTitle(activeQuickPick);
   refreshActiveQuickPick();
 }
 
 function toggleOption(key) {
-  if (key === "matchCase") searchOptions.matchCase = !searchOptions.matchCase;
-  if (key === "wholeWord") searchOptions.wholeWord = !searchOptions.wholeWord;
-  if (key === "regex") searchOptions.useRegex = !searchOptions.useRegex;
-  if (key === "fuzzy") searchOptions.fuzzy = !searchOptions.fuzzy;
-  if (key === "excludeGit") searchOptions.excludeGitIgnored = !searchOptions.excludeGitIgnored;
-  if (key === "excludeSearchIgnore") searchOptions.excludeSearchIgnored = !searchOptions.excludeSearchIgnored;
+  const map = {
+    matchCase: "matchCase",
+    wholeWord: "wholeWord",
+    regex: "useRegex",
+    fuzzy: "fuzzy",
+    excludeGit: "excludeGitIgnored",
+    excludeSearchIgnore: "excludeSearchIgnored"
+  };
+  const opt = map[key];
+  if (opt) searchOptions[opt] = !searchOptions[opt];
   refreshActiveQuickPick();
 }
 

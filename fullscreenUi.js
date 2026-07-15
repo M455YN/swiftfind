@@ -1,53 +1,110 @@
 const vscode = require("vscode");
 const path = require("path");
-const { searchByTab, openResult } = require("./searchEngine");
+const { searchByTabStreaming, openResult, createSearchController } = require("./searchEngine");
 const { isPolish } = require("./i18n");
 const { openReplacePanel } = require("./replaceUi");
 const { setLastSelection } = require("./uiSelectionState");
 const { getSidebarProvider } = require("./sidebarView");
 
-/**
- * @param {{query?:string, options?:{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} | string | undefined} payload
- */
-function openFullscreenSearch(payload) {
-  const initialQuery = typeof payload === "string" ? payload : payload?.query || "";
-  const initialOptions =
-    typeof payload === "string"
-      ? { matchCase: false, wholeWord: false, useRegex: false }
-      : {
-          matchCase: Boolean(payload?.options?.matchCase),
-          wholeWord: Boolean(payload?.options?.wholeWord),
-          useRegex: Boolean(payload?.options?.useRegex),
-          fuzzy: Boolean(payload?.options?.fuzzy),
-          excludeGitIgnored: payload?.options?.excludeGitIgnored !== false,
-          excludeSearchIgnored: payload?.options?.excludeSearchIgnored !== false,
-          scopePath: String(payload?.options?.scopePath || "")
-        };
-  const panel = vscode.window.createWebviewPanel(
-    "swiftFindFullscreen",
-    isPolish() ? "Wyniki SwiftFind" : "SwiftFind Results",
-    vscode.ViewColumn.Active,
-    { enableScripts: true, retainContextWhenHidden: true }
-  );
+/** @type {vscode.WebviewPanel | null} */
+let fullscreenPanel = null;
+let searchSeq = 0;
+/** @type {ReturnType<typeof createSearchController> | null} */
+let activeSearchController = null;
 
-  panel.webview.html = getHtml(initialQuery || "", initialOptions);
+function normalizePayload(payload) {
+  if (typeof payload === "string") {
+    return {
+      query: payload,
+      options: {
+        matchCase: false,
+        wholeWord: false,
+        useRegex: false,
+        fuzzy: false,
+        excludeGitIgnored: true,
+        excludeSearchIgnored: true,
+        scopePath: ""
+      }
+    };
+  }
+  return {
+    query: payload?.query || "",
+    options: {
+      matchCase: Boolean(payload?.options?.matchCase),
+      wholeWord: Boolean(payload?.options?.wholeWord),
+      useRegex: Boolean(payload?.options?.useRegex),
+      fuzzy: Boolean(payload?.options?.fuzzy),
+      excludeGitIgnored: payload?.options?.excludeGitIgnored !== false,
+      excludeSearchIgnored: payload?.options?.excludeSearchIgnored !== false,
+      scopePath: String(payload?.options?.scopePath || "")
+    }
+  };
+}
 
+function wireFullscreenMessages(panel) {
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (!msg || !msg.type) return;
 
+    if (msg.type === "pauseSearch") {
+      activeSearchController?.pause();
+      return;
+    }
+    if (msg.type === "resumeSearch") {
+      activeSearchController?.resume();
+      return;
+    }
+    if (msg.type === "stopSearch") {
+      activeSearchController?.cancel();
+      return;
+    }
+
     if (msg.type === "search") {
+      const reqId = Number(msg.requestId || 0) || ++searchSeq;
+      searchSeq = Math.max(searchSeq, reqId);
+      activeSearchController?.cancel();
+      const controller = createSearchController();
+      activeSearchController = controller;
       const q = String(msg.query || "").trim();
       const tab = String(msg.tab || "text");
-      const items = await searchByTab(tab, q, {
-        matchCase: Boolean(msg.matchCase),
-        wholeWord: Boolean(msg.wholeWord),
-        useRegex: Boolean(msg.useRegex),
-        fuzzy: Boolean(msg.fuzzy),
-        excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-        excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
-        scopePath: String(msg.scopePath || "")
-      });
-      panel.webview.postMessage({ type: "results", items, tab });
+      panel.webview.postMessage({ type: "searchStarted", requestId: reqId, tab, query: q });
+      try {
+        const opts = {
+          matchCase: Boolean(msg.matchCase),
+          wholeWord: Boolean(msg.wholeWord),
+          useRegex: Boolean(msg.useRegex),
+          fuzzy: Boolean(msg.fuzzy),
+          excludeGitIgnored: Boolean(msg.excludeGitIgnored),
+          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+          scopePath: String(msg.scopePath || "")
+        };
+        await searchByTabStreaming(tab, q, opts, {
+          controller,
+          isCancelled: () =>
+            reqId !== searchSeq || panel !== fullscreenPanel || controller.isCancelled(),
+          onBatch: ({ items, done, total, stopped }) => {
+            if (reqId !== searchSeq || panel !== fullscreenPanel) return;
+            panel.webview.postMessage({
+              type: done ? "results" : "resultsPartial",
+              items,
+              tab,
+              requestId: reqId,
+              query: q,
+              total,
+              done,
+              stopped: Boolean(stopped)
+            });
+          }
+        });
+      } catch (error) {
+        if (reqId !== searchSeq || panel !== fullscreenPanel) return;
+        panel.webview.postMessage({
+          type: "searchError",
+          requestId: reqId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        if (activeSearchController === controller) activeSearchController = null;
+      }
       return;
     }
 
@@ -118,6 +175,71 @@ function openFullscreenSearch(payload) {
   });
 }
 
+async function moveFullscreenTabToFirst() {
+  try {
+    await vscode.commands.executeCommand("moveActiveEditor", { to: "first", by: "tab" });
+  } catch {
+    try {
+      await vscode.commands.executeCommand("workbench.action.moveEditorToStart");
+    } catch {
+      // Older hosts may lack these commands.
+    }
+  }
+}
+
+/**
+ * @param {{query?:string, options?:{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} | string | undefined} payload
+ */
+async function openFullscreenSearch(payload) {
+  const { query, options } = normalizePayload(payload);
+  const title = isPolish() ? "Wyniki SwiftFind" : "SwiftFind Results";
+
+  if (fullscreenPanel) {
+    fullscreenPanel.title = title;
+    fullscreenPanel.reveal(vscode.ViewColumn.Active, false);
+    try {
+      await vscode.commands.executeCommand("workbench.action.unpinEditor");
+    } catch {
+      // ignore
+    }
+    await moveFullscreenTabToFirst();
+    fullscreenPanel.webview.postMessage({
+      type: "hydrate",
+      query,
+      options
+    });
+    return;
+  }
+
+  const panel = vscode.window.createWebviewPanel(
+    "swiftFindFullscreen",
+    title,
+    { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+    { enableScripts: true, retainContextWhenHidden: true }
+  );
+  fullscreenPanel = panel;
+  searchSeq = 0;
+  activeSearchController = null;
+  panel.webview.html = getHtml(query || "", options);
+  wireFullscreenMessages(panel);
+
+  panel.onDidDispose(() => {
+    if (fullscreenPanel === panel) {
+      activeSearchController?.cancel();
+      activeSearchController = null;
+      fullscreenPanel = null;
+      searchSeq = 0;
+    }
+  });
+
+  // Let the editor tab register, then park it as the first tab in the group.
+  setTimeout(() => {
+    if (fullscreenPanel === panel) {
+      void moveFullscreenTabToFirst();
+    }
+  }, 30);
+}
+
 function getHtml(initialQuery, initialOptions) {
   const pl = isPolish();
   const L = {
@@ -139,7 +261,15 @@ function getHtml(initialQuery, initialOptions) {
     results: pl ? "wynikow" : "results",
     scope: pl ? "Zakres" : "Scope",
     clearScope: pl ? "Wyczyść zakres" : "Clear Scope",
-    findReplace: pl ? "Znajdź i zamień…" : "Find and replace…"
+    findReplace: pl ? "Znajdź i zamień…" : "Find and replace…",
+    searching: pl ? "Wyszukiwanie…" : "Searching…",
+    typeToSearch: pl ? "Zacznij pisać, wyniki pojawią się na żywo." : "Start typing — results update live.",
+    foundSoFar: pl ? "znaleziono" : "found",
+    pause: pl ? "Wstrzymaj" : "Pause",
+    resume: pl ? "Wznów" : "Resume",
+    stop: pl ? "Zatrzymaj" : "Stop",
+    paused: pl ? "Wstrzymane…" : "Paused…",
+    stopped: pl ? "zatrzymano" : "stopped"
   };
   return `<!doctype html>
 <html>
@@ -148,19 +278,20 @@ function getHtml(initialQuery, initialOptions) {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); margin: 0; }
-    .top { position: sticky; top: 0; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 10px 12px; display: grid; grid-template-columns: 1fr; gap: 8px; z-index: 5; }
+    .top { position: sticky; top: 0; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 10px 12px 0; display: grid; grid-template-columns: 1fr; gap: 8px; z-index: 5; }
     .headline { font-size: 12px; font-weight: 600; opacity: .9; letter-spacing: .2px; }
     .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
     .tab { padding: 4px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; font-size: 12px; }
     .tab.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-list-activeSelectionBackground); }
-    .searchbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .searchbar { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; }
+    .searchbar button:disabled { opacity: 0.45; cursor: default; }
     .opts { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 4px 10px; font-size: 12px; opacity: 0.95; border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 6px 8px; }
     .scopebar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 4px 0 0;
+      padding: 4px 0 8px;
       font-size: 12px;
       opacity: 0.9;
     }
@@ -175,9 +306,32 @@ function getHtml(initialQuery, initialOptions) {
     }
     .scopebtn:hover { background: var(--vscode-list-hoverBackground); }
     .opts label { display: inline-flex; gap: 6px; align-items: center; line-height: 1.3; }
-    #q, #go { padding: 7px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-    #go { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
-    #go:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    #q, #go, #btnPause, #btnStop { padding: 7px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+    #go, #btnPause, #btnStop { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
+    #go:hover:not(:disabled), #btnPause:hover:not(:disabled), #btnStop:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
+    .progress {
+      height: 2px;
+      width: 100%;
+      margin: 0 -12px;
+      width: calc(100% + 24px);
+      background: transparent;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity .15s ease;
+    }
+    .progress.active { opacity: 1; }
+    .progress.paused > span { animation-play-state: paused; opacity: 0.55; }
+    .progress > span {
+      display: block;
+      height: 100%;
+      width: 35%;
+      background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+      animation: sf-indeterminate 1.1s ease-in-out infinite;
+    }
+    @keyframes sf-indeterminate {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
+    }
     .content { padding: 10px 12px; }
     .folder { margin-top: 12px; font-weight: 600; opacity: 0.9; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 4px; }
     .row { padding: 7px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
@@ -186,7 +340,8 @@ function getHtml(initialQuery, initialOptions) {
     .row.selected .meta, .row.selected .detail { color: inherit; opacity: 0.92; }
     .meta { opacity: 0.8; font-size: 12px; }
     .detail { font-family: var(--vscode-editor-font-family); font-size: 12px; opacity: 0.9; }
-    #summary { position: sticky; top: 142px; z-index: 3; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
+    #summary { position: sticky; top: 0; z-index: 3; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
+    #summary.busy { opacity: 1; }
     .ctx {
       position: fixed;
       z-index: 100;
@@ -225,6 +380,8 @@ function getHtml(initialQuery, initialOptions) {
     <div class="searchbar">
       <input id="q" placeholder="${L.query}" value="${escapeHtml(initialQuery)}" />
       <button id="go">${L.search}</button>
+      <button id="btnPause" type="button" disabled>${L.pause}</button>
+      <button id="btnStop" type="button" disabled>${L.stop}</button>
     </div>
     <div style="margin-top:4px;">
       <button type="button" id="btnReplace" class="scopebtn">${L.findReplace}</button>
@@ -241,16 +398,20 @@ function getHtml(initialQuery, initialOptions) {
       <div id="scopeInfo"></div>
       <button id="clearScope" class="scopebtn">${L.clearScope}</button>
     </div>
+    <div class="progress" id="progress" aria-hidden="true"><span></span></div>
   </div>
-  <div class="content" id="summary" style="padding-top:0; opacity:.85; font-size:12px;"></div>
+  <div class="content" id="summary" style="padding-top:8px; opacity:.85; font-size:12px;"></div>
   <div class="content" id="out"></div>
   <div id="ctx" class="ctx"><button id="ctxReveal">${pl ? "Pokaż w Eksploratorze Windows" : "Show in Windows Explorer"}</button></div>
   <script>
     const vscode = acquireVsCodeApi();
     const q = document.getElementById("q");
     const go = document.getElementById("go");
+    const btnPause = document.getElementById("btnPause");
+    const btnStop = document.getElementById("btnStop");
     const out = document.getElementById("out");
     const summary = document.getElementById("summary");
+    const progress = document.getElementById("progress");
     const ctx = document.getElementById("ctx");
     const ctxReveal = document.getElementById("ctxReveal");
     const tabsWrap = document.getElementById("tabs");
@@ -267,6 +428,11 @@ function getHtml(initialQuery, initialOptions) {
     const tabOrder = ["files","folders","text","symbols","commands"];
     let ctxItem = null;
     let lastSelectedKey = "";
+    let debounceTimer = null;
+    let requestId = 0;
+    let activeRequestId = 0;
+    let searching = false;
+    let paused = false;
 
     function itemKey(it) {
       if (!it) return "";
@@ -286,6 +452,25 @@ function getHtml(initialQuery, initialOptions) {
         excludeSearchIgnored: !!excludeSearchIgnored.checked,
         scopePath
       };
+    }
+
+    function updateControlButtons() {
+      btnPause.disabled = !searching;
+      btnStop.disabled = !searching;
+      btnPause.textContent = paused ? "${L.resume}" : "${L.pause}";
+      progress.classList.toggle("paused", searching && paused);
+    }
+
+    function setBusy(on, label) {
+      searching = !!on;
+      if (!searching) paused = false;
+      progress.classList.toggle("active", searching);
+      progress.setAttribute("aria-hidden", searching ? "false" : "true");
+      summary.classList.toggle("busy", searching);
+      if (searching) {
+        summary.textContent = label || (paused ? "${L.paused}" : "${L.searching}");
+      }
+      updateControlButtons();
     }
 
     function rememberSelection(it) {
@@ -315,39 +500,68 @@ function getHtml(initialQuery, initialOptions) {
       scopeInfo.textContent = scopePath ? "${L.scope}: " + scopePath : "";
     }
 
-    function run() {
+    function run(immediate) {
       const query = q.value.trim();
-      if (!query) { out.innerHTML = ""; return; }
-      out.textContent = "Loading...";
-      refreshScopeInfo();
-      vscode.postMessage({
-        type: "search",
-        query,
-        tab: activeTab,
-        matchCase: !!matchCase.checked,
-        wholeWord: !!wholeWord.checked,
-        useRegex: !!useRegex.checked,
-        fuzzy: !!fuzzy.checked,
-        excludeGitIgnored: !!excludeGitIgnored.checked,
-        excludeSearchIgnored: !!excludeSearchIgnored.checked,
-        scopePath
-      });
+      if (!query) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        setBusy(false);
+        out.innerHTML = "";
+        summary.textContent = "${L.typeToSearch}";
+        return;
+      }
+      const launch = () => {
+        refreshScopeInfo();
+        activeRequestId = ++requestId;
+        paused = false;
+        setBusy(true, "${L.searching}");
+        vscode.postMessage({
+          type: "search",
+          requestId: activeRequestId,
+          query,
+          tab: activeTab,
+          ...searchOptionsPayload()
+        });
+      };
+      if (immediate) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        launch();
+        return;
+      }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(launch, 160);
     }
 
-    go.addEventListener("click", run);
-    q.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
-    matchCase.addEventListener("change", run);
-    wholeWord.addEventListener("change", run);
-    useRegex.addEventListener("change", run);
-    fuzzy.addEventListener("change", run);
-    excludeGitIgnored.addEventListener("change", run);
-    excludeSearchIgnored.addEventListener("change", run);
+    go.addEventListener("click", () => run(true));
+    btnPause.addEventListener("click", () => {
+      if (!searching) return;
+      if (paused) {
+        paused = false;
+        updateControlButtons();
+        summary.textContent = "${L.searching}";
+        vscode.postMessage({ type: "resumeSearch" });
+      } else {
+        paused = true;
+        updateControlButtons();
+        summary.textContent = "${L.paused}";
+        vscode.postMessage({ type: "pauseSearch" });
+      }
+    });
+    btnStop.addEventListener("click", () => {
+      if (!searching) return;
+      vscode.postMessage({ type: "stopSearch" });
+    });
+    q.addEventListener("keydown", (e) => { if (e.key === "Enter") run(true); });
+    q.addEventListener("input", () => run(false));
+    matchCase.addEventListener("change", () => run(true));
+    wholeWord.addEventListener("change", () => run(true));
+    useRegex.addEventListener("change", () => run(true));
+    fuzzy.addEventListener("change", () => run(true));
+    excludeGitIgnored.addEventListener("change", () => run(true));
+    excludeSearchIgnored.addEventListener("change", () => run(true));
     clearScopeBtn.addEventListener("click", () => {
       scopePath = "";
       refreshScopeInfo();
-      if (q.value.trim()) {
-        run();
-      }
+      if (q.value.trim()) run(true);
     });
 
     document.getElementById("btnReplace").addEventListener("click", () => {
@@ -355,24 +569,69 @@ function getHtml(initialQuery, initialOptions) {
         type: "openReplace",
         find: q.value,
         replace: "",
-        matchCase: !!matchCase.checked,
-        wholeWord: !!wholeWord.checked,
-        useRegex: !!useRegex.checked,
-        fuzzy: !!fuzzy.checked,
-        excludeGitIgnored: !!excludeGitIgnored.checked,
-        excludeSearchIgnored: !!excludeSearchIgnored.checked,
-        scopePath
+        ...searchOptionsPayload()
       });
     });
 
     window.addEventListener("message", (event) => {
       const msg = event.data;
+      if (!msg || !msg.type) return;
+
+      if (msg.type === "hydrate") {
+        const opts = msg.options || {};
+        q.value = String(msg.query || "");
+        matchCase.checked = !!opts.matchCase;
+        wholeWord.checked = !!opts.wholeWord;
+        useRegex.checked = !!opts.useRegex;
+        fuzzy.checked = !!opts.fuzzy;
+        excludeGitIgnored.checked = opts.excludeGitIgnored !== false;
+        excludeSearchIgnored.checked = opts.excludeSearchIgnored !== false;
+        scopePath = String(opts.scopePath || "");
+        refreshScopeInfo();
+        if (q.value.trim()) run(true);
+        else {
+          out.innerHTML = "";
+          summary.textContent = "${L.typeToSearch}";
+          setBusy(false);
+        }
+        return;
+      }
+
+      if (msg.requestId && Number(msg.requestId) !== activeRequestId) return;
+
+      if (msg.type === "searchStarted") {
+        paused = false;
+        setBusy(true, "${L.searching}");
+        out.innerHTML = "";
+        return;
+      }
+      if (msg.type === "searchError") {
+        setBusy(false);
+        summary.textContent = msg.message || "Error";
+        return;
+      }
+      if (msg.type === "resultsPartial") {
+        const items = Array.isArray(msg.items) ? msg.items : [];
+        if (!paused) setBusy(true, "${L.searching}");
+        requestAnimationFrame(() => {
+          if (Number(msg.requestId) !== activeRequestId) return;
+          render(items, msg.tab || activeTab, { partial: true, stopped: false });
+        });
+        return;
+      }
       if (msg.type !== "results") return;
       const items = Array.isArray(msg.items) ? msg.items : [];
-      render(items, msg.tab || activeTab);
+      const stopped = !!msg.stopped;
+      setBusy(false);
+      requestAnimationFrame(() => {
+        if (msg.requestId && Number(msg.requestId) !== activeRequestId) return;
+        render(items, msg.tab || activeTab, { partial: false, stopped });
+      });
     });
 
-    function render(items, tab) {
+    function render(items, tab, opts) {
+      const partial = !!(opts && opts.partial);
+      const stopped = !!(opts && opts.stopped);
       out.innerHTML = "";
       const tabNames = {
         files: "${L.files}",
@@ -383,8 +642,20 @@ function getHtml(initialQuery, initialOptions) {
         everything: "Everything"
       };
       const tabName = tabNames[tab] || tab;
-      summary.textContent = tabName + ": " + items.length + " ${L.results}" + (scopePath ? " | ${L.scope}: " + scopePath : "");
-      if (!items.length) { out.textContent = "${L.noResults}"; return; }
+      const scopePart = scopePath ? " | ${L.scope}: " + scopePath : "";
+      if (partial) {
+        summary.textContent = paused
+          ? (tabName + ": ${L.foundSoFar} " + items.length + " — ${L.paused}" + scopePart)
+          : (tabName + ": ${L.foundSoFar} " + items.length + "…" + scopePart);
+      } else if (stopped) {
+        summary.textContent = tabName + ": " + items.length + " ${L.results} (${L.stopped})" + scopePart;
+      } else {
+        summary.textContent = tabName + ": " + items.length + " ${L.results}" + scopePart;
+      }
+      if (!items.length) {
+        if (!partial) out.textContent = "${L.noResults}";
+        return;
+      }
       if (tab === "text") {
         const grouped = new Map();
         for (const it of items) {
@@ -453,7 +724,7 @@ function getHtml(initialQuery, initialOptions) {
       activeTab = b.getAttribute("data-tab");
       for (const x of tabsWrap.querySelectorAll(".tab")) x.classList.remove("active");
       b.classList.add("active");
-      run();
+      run(true);
     });
 
     ctxReveal.addEventListener("click", () => {
@@ -476,18 +747,19 @@ function getHtml(initialQuery, initialOptions) {
       }
       if (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
         const k = String(e.key || "").toLowerCase();
-        if (k === "c") { matchCase.checked = !matchCase.checked; run(); }
-        if (k === "w") { wholeWord.checked = !wholeWord.checked; run(); }
-        if (k === "r") { useRegex.checked = !useRegex.checked; run(); }
-        if (k === "f") { fuzzy.checked = !fuzzy.checked; run(); }
-        if (k === "g") { excludeGitIgnored.checked = !excludeGitIgnored.checked; run(); }
-        if (k === "s") { excludeSearchIgnored.checked = !excludeSearchIgnored.checked; run(); }
+        if (k === "c") { matchCase.checked = !matchCase.checked; run(true); }
+        if (k === "w") { wholeWord.checked = !wholeWord.checked; run(true); }
+        if (k === "r") { useRegex.checked = !useRegex.checked; run(true); }
+        if (k === "f") { fuzzy.checked = !fuzzy.checked; run(true); }
+        if (k === "g") { excludeGitIgnored.checked = !excludeGitIgnored.checked; run(true); }
+        if (k === "s") { excludeSearchIgnored.checked = !excludeSearchIgnored.checked; run(true); }
       }
     });
 
     function esc(s){ return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
     refreshScopeInfo();
-    if (q.value.trim()) run();
+    summary.textContent = "${L.typeToSearch}";
+    if (q.value.trim()) run(true);
   </script>
 </body>
 </html>`;

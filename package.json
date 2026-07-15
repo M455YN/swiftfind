@@ -35,6 +35,7 @@
     "onStartupFinished",
     "onCommand:swiftFind.openReplace",
     "onCommand:swiftFind.open",
+    "onCommand:swiftFind.showWelcome",
     "onView:swiftFind.sidebar",
     "onView:swiftFind.solutionExplorer",
     "onView:swiftFind.tasksExplorer"
@@ -54,6 +55,10 @@
       {
         "command": "swiftFind.openReplace",
         "title": "%cmd.openReplace%"
+      },
+      {
+        "command": "swiftFind.showWelcome",
+        "title": "%cmd.showWelcome%"
       },
       {
         "command": "swiftFind.toggleCaseSensitive",
@@ -135,13 +140,33 @@
     "keybindings": [
       {
         "command": "swiftFind.open",
-        "key": "ctrl+shift+space",
-        "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
+        "key": "ctrl+alt+shift+space",
+        "mac": "cmd+alt+shift+space"
+      },
+      {
+        "command": "swiftFind.openFullscreen",
+        "key": "ctrl+alt+shift+f",
+        "mac": "cmd+alt+shift+f"
       },
       {
         "command": "swiftFind.openReplace",
-        "key": "ctrl+shift+h",
-        "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
+        "key": "ctrl+alt+shift+h",
+        "mac": "cmd+alt+shift+h"
+      },
+      {
+        "command": "swiftFind.open",
+        "key": "ctrl+shift+j space",
+        "mac": "cmd+shift+j space"
+      },
+      {
+        "command": "swiftFind.openFullscreen",
+        "key": "ctrl+shift+j f",
+        "mac": "cmd+shift+j f"
+      },
+      {
+        "command": "swiftFind.openReplace",
+        "key": "ctrl+shift+j h",
+        "mac": "cmd+shift+j h"
       },
       {
         "command": "swiftFind.nextTab",
@@ -276,8 +301,9 @@
       "properties": {
         "swiftFind.maxResults": {
           "type": "number",
-          "default": 300,
-          "minimum": 10,
+          "default": 5000,
+          "minimum": 50,
+          "maximum": 100000,
           "description": "%cfg.maxResults%"
         },
         "swiftFind.caseInsensitive": {
@@ -289,6 +315,51 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.preview%"
+        },
+        "swiftFind.excludeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/{node_modules,.git,dist,build,out,.next,.cache,.venv,venv}/**",
+            "**/*.dtbcache",
+	    "**/*.dtbcache.v2",
+            "**/*.bin",
+            "**/*.exe",
+            "**/*.dll",
+            "**/*.pdb",
+            "**/*.obj",
+            "**/*.o",
+            "**/*.a",
+            "**/*.lib",
+            "**/*.so",
+            "**/*.dylib",
+            "**/*.class",
+            "**/*.jar",
+            "**/*.wasm",
+            "**/*.png",
+            "**/*.jpg",
+            "**/*.jpeg",
+            "**/*.gif",
+            "**/*.webp",
+            "**/*.ico",
+            "**/*.pdf",
+            "**/*.zip",
+            "**/*.7z",
+            "**/*.rar",
+            "**/*.gz",
+            "**/*.tar",
+            "**/*.woff",
+            "**/*.woff2",
+            "**/*.ttf",
+            "**/*.eot",
+            "**/*.mp3",
+            "**/*.mp4",
+            "**/*.wav",
+            "**/*.suo"
+          ],
+          "description": "%cfg.excludeGlobs%"
         }
       }
     }

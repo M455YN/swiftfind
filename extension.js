@@ -5,6 +5,13 @@ const { SwiftFindSidebarProvider } = require("./sidebarView");
 const { SolutionExplorerProvider } = require("./solutionExplorer");
 const { TasksExplorerProvider } = require("./tasksExplorer");
 const { openReplacePanel } = require("./replaceUi");
+const { initPathIndexWatchers, invalidatePathIndex } = require("./searchEngine");
+const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
+
+function onTreeChanged() {
+  invalidatePathIndex("fs");
+  markDirty();
+}
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -20,6 +27,17 @@ function activate(context) {
   const solutionProvider = new SolutionExplorerProvider(rootPath || "", context.extensionUri);
   const tasksProvider = new TasksExplorerProvider(rootPath || "");
 
+  initPathIndexWatchers(context, {
+    onInvalidate: (reason) => {
+      // Branch switch / checkout: invalidate QuickPick text cache too.
+      if (reason === "git-head" || reason === "workspace") {
+        markDirty();
+      }
+    }
+  });
+
+  maybeShowWelcomeOnStartup(context).catch(() => {});
+
   context.subscriptions.push(
     statusBarItem,
     vscode.window.registerWebviewViewProvider(
@@ -33,9 +51,9 @@ function activate(context) {
         tasksProvider.refresh();
       }
     }),
-    vscode.workspace.onDidDeleteFiles(markDirty),
-    vscode.workspace.onDidCreateFiles(markDirty),
-    vscode.workspace.onDidRenameFiles(markDirty),
+    vscode.workspace.onDidDeleteFiles(onTreeChanged),
+    vscode.workspace.onDidCreateFiles(onTreeChanged),
+    vscode.workspace.onDidRenameFiles(onTreeChanged),
     vscode.window.registerTreeDataProvider("swiftFind.solutionExplorer", solutionProvider),
     vscode.window.registerTreeDataProvider("swiftFind.tasksExplorer", tasksProvider),
     vscode.commands.registerCommand("swiftFind.solutionExplorer.refresh", () => solutionProvider.refresh()),
@@ -143,6 +161,7 @@ function activate(context) {
     vscode.commands.registerCommand("swiftFind.openReplace", (payload) => {
       openReplacePanel(payload && typeof payload === "object" ? payload : {});
     }),
+    vscode.commands.registerCommand("swiftFind.showWelcome", () => openWelcomePage(context)),
     vscode.commands.registerCommand("swiftFind.focusSidebar", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.swiftFind");
       await vscode.commands.executeCommand("swiftFind.sidebar.focus");

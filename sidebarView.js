@@ -165,7 +165,6 @@ class SwiftFindSidebarProvider {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 10px; }
     body {
       font-family: var(--vscode-font-family);
       color: var(--vscode-foreground);
@@ -518,7 +517,7 @@ class SwiftFindSidebarProvider {
       const tabName = tabNames[activeTab] || activeTab;
       meta.textContent = tabName + ": " + items.length + " ${L.results}";
 
-      const renderItems = items.slice(0, 300);
+      const renderItems = items;
       if (activeTab === "text") {
         const grouped = new Map();
         for (const item of renderItems) {

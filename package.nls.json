@@ -5,6 +5,7 @@
   "cmd.open.short": "SwiftFind",
   "cmd.openFullscreen": "Open SwiftFind Fullscreen Results",
   "cmd.openReplace": "SwiftFind: Find and Replace in Files",
+  "cmd.showWelcome": "SwiftFind: Welcome",
   "cmd.toggleCase": "SwiftFind: Toggle Case Sensitive",
   "cmd.toggleRegex": "SwiftFind: Toggle Regex",
   "cmd.toggleWholeWord": "SwiftFind: Toggle Whole Word",
@@ -29,8 +30,9 @@
   "views.tasks.name": "Task Runner",
   "views.sidebar.name": "Search Panel",
   "cfg.title": "SwiftFind",
-  "cfg.maxResults": "Maximum number of returned matches.",
+  "cfg.maxResults": "Maximum number of search matches to return (50–100000).",
   "cfg.caseInsensitive": "Case-insensitive search mode.",
-  "cfg.preview": "Preview file while moving through results."
+  "cfg.preview": "Preview file while moving through results.",
+  "cfg.excludeGlobs": "Glob patterns for files/folders skipped by SwiftFind (e.g. **/*.bin, **/*.dtbcache)."
 }
 
