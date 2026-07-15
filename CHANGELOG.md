@@ -2,7 +2,7 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
-## [0.1.6] - 2026-07-15
+## [1.0.0] - 2026-07-15
 
 - Added **Action** sidebar section with VS Code-style tiles: **Fullscreen Search** and **Fullscreen Replace**; **Task Runner** remains below.
 - Removed the legacy sidebar search panel and selection sync (`sidebarView`, `uiSelectionState`).
