@@ -10,8 +10,6 @@ const {
 } = require("./searchEngine");
 const { isPolish } = require("./i18n");
 const { markDirty } = require("./quickPickUi");
-const { setLastSelection } = require("./uiSelectionState");
-const { getSidebarProvider } = require("./sidebarView");
 
 /** @type {vscode.WebviewPanel | null} */
 let fullscreenPanel = null;
@@ -132,26 +130,16 @@ function wireFullscreenMessages(panel) {
     }
 
     if (msg.type === "select") {
-      setLastSelection({
-        tab: String(msg.tab || "text"),
-        query: String(msg.query || ""),
-        options: {
-          matchCase: Boolean(msg.matchCase),
-          wholeWord: Boolean(msg.wholeWord),
-          useRegex: Boolean(msg.useRegex),
-          fuzzy: Boolean(msg.fuzzy),
-          excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
-          scopePath: String(msg.scopePath || "")
-        },
-        item: {
+      if (msg.commandId) return;
+      await openResult(
+        {
           filePath: msg.filePath,
-          lineNumber: Number(msg.lineNumber || 0),
+          lineNumber: Number(msg.lineNumber || 1),
           column: Number(msg.column || 1),
-          commandId: msg.commandId
-        }
-      });
-      getSidebarProvider()?.pushSelectionHighlight();
+          matchLength: Number(msg.matchLength || 0)
+        },
+        getConfig().preview
+      );
       return;
     }
 
@@ -164,7 +152,8 @@ function wireFullscreenMessages(panel) {
         {
           filePath: msg.filePath,
           lineNumber: Number(msg.lineNumber || 1),
-          column: Number(msg.column || 1)
+          column: Number(msg.column || 1),
+          matchLength: Number(msg.matchLength || 0)
         },
         false
       );
@@ -177,6 +166,11 @@ function wireFullscreenMessages(panel) {
       if (!root || !rel) return;
       const uri = vscode.Uri.file(path.join(root, rel));
       await vscode.commands.executeCommand("revealFileInOS", uri);
+      return;
+    }
+
+    if (msg.type === "openSettings") {
+      await vscode.commands.executeCommand("workbench.action.openSettings", "swiftFind");
       return;
     }
 
@@ -248,7 +242,7 @@ async function moveFullscreenTabToFirst() {
  */
 async function openFullscreenSearch(payload) {
   const { query, options, replace, showReplace } = normalizePayload(payload);
-  const title = isPolish() ? "Szukaj w plikach" : "Find in Files";
+  const title = "SwiftFind";
 
   if (fullscreenPanel) {
     fullscreenPanel.title = title;
@@ -302,7 +296,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
   const initialShowReplace = Boolean(extras.showReplace);
   const pl = isPolish();
   const L = {
-    resultsTitle: pl ? "Szukaj w plikach" : "Find in Files",
+    resultsTitle: "SwiftFind",
     files: pl ? "Pliki" : "Files",
     folders: pl ? "Foldery" : "Folders",
     text: pl ? "Tekst" : "Text",
@@ -339,7 +333,8 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     expandAll: pl ? "Rozwiń wszystko" : "Expand all",
     collapseAll: pl ? "Zwiń wszystko" : "Collapse all",
     filesWord: pl ? "plików" : "files",
-    occurrences: pl ? "wystąpień" : "occurrences"
+    occurrences: pl ? "wystąpień" : "occurrences",
+    settings: pl ? "Ustawienia SwiftFind" : "SwiftFind Settings"
   };
   const searchOnType = getConfig().searchOnType !== false;
   const queryPlaceholder = searchOnType ? L.query : L.typeThenEnter;
@@ -380,7 +375,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     }
     .title-row {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
     }
@@ -390,10 +385,78 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       letter-spacing: .02em;
       text-transform: none;
     }
+    .title-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+    }
     .title-meta {
       font-size: 11px;
       color: var(--sf-muted);
       white-space: nowrap;
+    }
+    .icon-btn {
+      appearance: none;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--sf-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon-btn:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18));
+      color: var(--vscode-foreground);
+    }
+    .icon-btn:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 1px;
+    }
+    .icon-btn svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
+    .icon-btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    .icon-btn:disabled:hover {
+      background: transparent;
+      color: var(--sf-muted);
+    }
+    .icon-btn.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .icon-btn.primary:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+      color: var(--vscode-button-foreground);
+    }
+    .find-actions .icon-btn {
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--vscode-button-border, transparent);
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    .find-actions .icon-btn:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    .find-actions .icon-btn.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: transparent;
+    }
+    .find-actions .icon-btn.primary:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
     }
     .tabs {
       display: flex;
@@ -599,6 +662,38 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       color: var(--sf-muted);
       font-size: 12px;
     }
+    .folder {
+      margin: 0;
+    }
+    .folder-head {
+      display: grid;
+      grid-template-columns: 16px 1fr auto;
+      gap: 6px;
+      align-items: center;
+      padding: 3px 12px 3px 8px;
+      min-height: var(--sf-row-h);
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+    }
+    .folder-head:hover { background: var(--vscode-list-hoverBackground); }
+    .folder-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+    }
+    .folder > .folder-head .chev {
+      transform: rotate(90deg);
+    }
+    .folder.collapsed > .folder-head .chev { transform: rotate(0deg); }
+    .folder.collapsed > .folder-body { display: none; }
+    .folder-body {
+      margin: 0;
+      padding-left: 12px;
+      border-left: 1px solid color-mix(in srgb, var(--sf-border) 70%, transparent);
+      margin-left: 14px;
+    }
     .file {
       margin: 0;
     }
@@ -607,7 +702,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       grid-template-columns: 16px 1fr auto;
       gap: 6px;
       align-items: center;
-      padding: 3px 12px 3px 8px;
+      padding: 3px 12px 3px 4px;
       min-height: var(--sf-row-h);
       cursor: pointer;
       user-select: none;
@@ -777,7 +872,14 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
   <div class="chrome">
     <div class="title-row">
       <div class="title">${L.resultsTitle}</div>
-      <div class="title-meta" id="titleMeta"></div>
+      <div class="title-right">
+        <div class="title-meta" id="titleMeta"></div>
+        <button type="button" class="icon-btn" id="btnSettings" title="${L.settings}" aria-label="${L.settings}">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M9.1 4.4 9.4 3H6.6l.3 1.4-.9.5-.9-1.1-1.4.8.5 1.3-1.2.1V9.5l1.2.1-.5 1.3 1.4.8.9-1.1.9.5-.3 1.4h2.8l-.3-1.4.9-.5.9 1.1 1.4-.8-.5-1.3 1.2-.1V6.5l-1.2-.1.5-1.3-1.4-.8-.9 1.1-.9-.5zM8 9.5A1.5 1.5 0 1 1 8 6.5a1.5 1.5 0 0 1 0 3z"/>
+          </svg>
+        </button>
+      </div>
     </div>
     <div class="tabs" id="tabs" role="tablist">
       <button class="tab" data-tab="files" role="tab">${L.files}</button>
@@ -799,9 +901,15 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
         </div>
       </div>
       <div class="find-actions">
-        <button class="btn primary" id="go" type="button">${L.search}</button>
-        <button class="btn" id="btnPause" type="button" disabled>${L.pause}</button>
-        <button class="btn" id="btnStop" type="button" disabled>${L.stop}</button>
+        <button class="icon-btn primary" id="go" type="button" title="${L.search}" aria-label="${L.search}">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10.8 9.9h-.6l-.2-.2a4.4 4.4 0 1 0-.5.5l.2.2v.6l3.4 3.4.9-.9-3.2-3.4zm-4 0A3.1 3.1 0 1 1 9.9 6.8 3.1 3.1 0 0 1 6.8 9.9z"/></svg>
+        </button>
+        <button class="icon-btn" id="btnPause" type="button" title="${L.pause}" aria-label="${L.pause}" disabled>
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 2.5h2.2v11H4.5zm4.8 0h2.2v11H9.3z"/></svg>
+        </button>
+        <button class="icon-btn" id="btnStop" type="button" title="${L.stop}" aria-label="${L.stop}" disabled>
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.5 3.5h9v9h-9z"/></svg>
+        </button>
       </div>
     </div>
     <div class="replace-row">
@@ -871,6 +979,8 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     let lastSearchTab = "text";
     let searchOnType = ${searchOnType ? "true" : "false"};
     const collapsedFiles = new Set();
+    /** Expanded folder paths. Empty ⇒ all folders collapsed (only top-level names visible). */
+    const expandedFolders = new Set();
 
     function emptyHintText() {
       return searchOnType ? "${L.typeToSearch}" : "${L.typeThenEnter}";
@@ -909,10 +1019,16 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       };
     }
 
+    const iconPause = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 2.5h2.2v11H4.5zm4.8 0h2.2v11H9.3z"/></svg>';
+    const iconResume = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.5v11l9-5.5L4 2.5z"/></svg>';
+
     function updateControlButtons() {
       btnPause.disabled = !searching;
       btnStop.disabled = !searching;
-      btnPause.textContent = paused ? "${L.resume}" : "${L.pause}";
+      const pauseLabel = paused ? "${L.resume}" : "${L.pause}";
+      btnPause.title = pauseLabel;
+      btnPause.setAttribute("aria-label", pauseLabel);
+      btnPause.innerHTML = paused ? iconResume : iconPause;
       progress.classList.toggle("paused", searching && paused);
     }
 
@@ -927,20 +1043,6 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
         titleMeta.textContent = paused ? "${L.paused}" : "${L.searching}";
       }
       updateControlButtons();
-    }
-
-    function rememberSelection(it) {
-      lastSelectedKey = itemKey(it);
-      vscode.postMessage({
-        type: "select",
-        tab: activeTab,
-        query: q.value.trim(),
-        filePath: it.filePath,
-        lineNumber: it.lineNumber,
-        column: it.column,
-        commandId: it.commandId,
-        ...searchOptionsPayload()
-      });
     }
 
     function applySelectionToRows() {
@@ -980,6 +1082,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
         activeRequestId = ++requestId;
         paused = false;
         collapsedFiles.clear();
+        expandedFolders.clear();
         setBusy(true, "${L.searching}");
         vscode.postMessage({
           type: "search",
@@ -1021,9 +1124,16 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     });
     btnExpand.addEventListener("click", () => {
       collapsedFiles.clear();
+      for (const el of out.querySelectorAll(".folder")) {
+        const key = el.dataset.folder || "";
+        if (key) expandedFolders.add(key);
+        el.classList.remove("collapsed");
+      }
       for (const el of out.querySelectorAll(".file")) el.classList.remove("collapsed");
     });
     btnCollapse.addEventListener("click", () => {
+      expandedFolders.clear();
+      for (const el of out.querySelectorAll(".folder")) el.classList.add("collapsed");
       for (const el of out.querySelectorAll(".file")) {
         const key = el.dataset.file || "";
         if (key) collapsedFiles.add(key);
@@ -1050,6 +1160,9 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     document.getElementById("btnReplace").addEventListener("click", () => {
       setReplaceOpen(!replaceOpen);
       if (replaceOpen) replaceEl.focus();
+    });
+    document.getElementById("btnSettings").addEventListener("click", () => {
+      vscode.postMessage({ type: "openSettings" });
     });
     btnReplacePreview.addEventListener("click", () => {
       const find = q.value.trim();
@@ -1206,8 +1319,8 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     function highlightLine(detail, query, column) {
       const line = String(detail || "");
       const needle = String(query || "");
-      if (!line) return "";
-      if (!needle) return esc(line);
+      if (!line) return { html: "", start: 0, length: 0 };
+      if (!needle) return { html: esc(line), start: 0, length: 0 };
       let start = Math.max(0, Number(column || 1) - 1);
       let len = needle.length;
       if (useRegex.checked) {
@@ -1232,7 +1345,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       const before = esc(line.slice(0, start));
       const mid = esc(line.slice(start, start + len));
       const after = esc(line.slice(start + len));
-      return before + "<mark>" + mid + "</mark>" + after;
+      return { html: before + "<mark>" + mid + "</mark>" + after, start, length: len };
     }
 
     function highlightSpan(line, column, matchLength) {
@@ -1241,6 +1354,11 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       const len = Math.max(1, Number(matchLength) || 1);
       const end = Math.min(src.length, start + len);
       return esc(src.slice(0, start)) + "<mark>" + esc(src.slice(start, end)) + "</mark>" + esc(src.slice(end));
+    }
+
+    function matchLengthFor(it) {
+      const hit = highlightLine(it.detail, q.value.trim(), it.column);
+      return hit.length || 0;
     }
 
     function renderReplaceSamples(samples) {
@@ -1294,10 +1412,20 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
             for (const r of out.querySelectorAll(".match, .row")) r.classList.remove("selected");
             row.classList.add("selected");
             vscode.postMessage({
+              type: "select",
+              filePath: fp,
+              lineNumber: p.lineNumber,
+              column: p.column,
+              matchLength: beforeLen
+            });
+          });
+          row.addEventListener("dblclick", () => {
+            vscode.postMessage({
               type: "open",
               filePath: fp,
               lineNumber: p.lineNumber,
-              column: p.column
+              column: p.column,
+              matchLength: beforeLen
             });
           });
           body.appendChild(row);
@@ -1309,17 +1437,39 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       }
     }
 
-    function openItem(it) {
-      rememberSelection(it);
+    function markSelected(it) {
+      lastSelectedKey = itemKey(it);
       for (const r of out.querySelectorAll(".match, .row")) r.classList.remove("selected");
       const el = out.querySelector('[data-key="' + CSS.escape(itemKey(it)) + '"]');
       if (el) el.classList.add("selected");
+    }
+
+    function previewItem(it) {
+      markSelected(it);
+      const matchLength = matchLengthFor(it);
+      vscode.postMessage({
+        type: "select",
+        tab: activeTab,
+        query: q.value.trim(),
+        filePath: it.filePath,
+        lineNumber: it.lineNumber,
+        column: it.column,
+        commandId: it.commandId,
+        matchLength,
+        ...searchOptionsPayload()
+      });
+    }
+
+    function openItem(it) {
+      markSelected(it);
+      const matchLength = matchLengthFor(it);
       vscode.postMessage({
         type: "open",
         filePath: it.filePath,
         lineNumber: it.lineNumber,
         column: it.column,
-        commandId: it.commandId
+        commandId: it.commandId,
+        matchLength
       });
     }
 
@@ -1338,16 +1488,18 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       const row = document.createElement("div");
       row.className = "match";
       row.dataset.key = itemKey(it);
+      const hit = highlightLine(it.detail, q.value.trim(), it.column);
       row.innerHTML =
         '<div class="ln">' + esc(String(it.lineNumber || "")) + '</div>' +
-        '<div class="code">' + highlightLine(it.detail, q.value.trim(), it.column) + '</div>';
-      row.addEventListener("click", () => openItem(it));
+        '<div class="code">' + hit.html + '</div>';
+      row.addEventListener("click", () => previewItem(it));
+      row.addEventListener("dblclick", () => openItem(it));
       bindContext(row, it);
       return row;
     }
 
     function fileGroup(filePath, matches) {
-      const { name, dir } = splitPath(filePath);
+      const { name } = splitPath(filePath);
       const root = document.createElement("div");
       root.className = "file";
       root.dataset.file = filePath;
@@ -1359,9 +1511,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       const countLabel = count === 1 ? "${L.match}" : "${L.matches}";
       head.innerHTML =
         '<span class="chev">▸</span>' +
-        '<div class="file-name">' + esc(name) +
-          (dir ? '<span class="file-path">' + esc(dir) + '</span>' : '') +
-        '</div>' +
+        '<div class="file-name">' + esc(name) + '</div>' +
         '<span class="badge" title="' + count + ' ' + countLabel + '">' + count + '</span>';
       head.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -1384,6 +1534,92 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       return root;
     }
 
+    /**
+     * Nested path tree: project → folder → file → matches
+     */
+    function createDirNode(name, pathKey) {
+      return {
+        name,
+        path: pathKey,
+        dirs: new Map(),
+        files: new Map(),
+        matchCount: 0,
+        fileCount: 0
+      };
+    }
+
+    function buildPathTree(items) {
+      const root = createDirNode("", "");
+      for (const it of items) {
+        if (!it.filePath) continue;
+        const fp = String(it.filePath).replaceAll("\\\\", "/").replace(/^\\/+/, "");
+        const parts = fp.split("/").filter(Boolean);
+        if (!parts.length) continue;
+        let node = root;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const seg = parts[i];
+          const nextPath = node.path ? node.path + "/" + seg : seg;
+          if (!node.dirs.has(seg)) node.dirs.set(seg, createDirNode(seg, nextPath));
+          node = node.dirs.get(seg);
+        }
+        const fileName = parts[parts.length - 1];
+        const fullPath = fp;
+        if (!node.files.has(fullPath)) node.files.set(fullPath, []);
+        node.files.get(fullPath).push(it);
+      }
+      function tally(node) {
+        let matches = 0;
+        let files = node.files.size;
+        for (const list of node.files.values()) matches += list.length;
+        for (const child of node.dirs.values()) {
+          const t = tally(child);
+          matches += t.matches;
+          files += t.files;
+        }
+        node.matchCount = matches;
+        node.fileCount = files;
+        return { matches, files };
+      }
+      tally(root);
+      return root;
+    }
+
+    function renderDirNode(node) {
+      const root = document.createElement("div");
+      root.className = "folder";
+      root.dataset.folder = node.path;
+      const isExpanded = expandedFolders.has(node.path);
+      if (!isExpanded) root.classList.add("collapsed");
+
+      const head = document.createElement("div");
+      head.className = "folder-head";
+      const countLabel = node.matchCount === 1 ? "${L.match}" : "${L.matches}";
+      head.innerHTML =
+        '<span class="chev">▸</span>' +
+        '<div class="folder-name">' + esc(node.name) +
+          '<span class="file-path">' + node.fileCount + " · " + node.matchCount + " " + countLabel + "</span>" +
+        "</div>" +
+        '<span class="badge">' + node.matchCount + "</span>";
+      head.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const willCollapse = !root.classList.contains("collapsed");
+        root.classList.toggle("collapsed", willCollapse);
+        if (willCollapse) expandedFolders.delete(node.path);
+        else expandedFolders.add(node.path);
+      });
+
+      const body = document.createElement("div");
+      body.className = "folder-body";
+      const dirNames = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b));
+      for (const name of dirNames) body.appendChild(renderDirNode(node.dirs.get(name)));
+      const filePaths = [...node.files.keys()].sort((a, b) => a.localeCompare(b));
+      for (const fp of filePaths) body.appendChild(fileGroup(fp, node.files.get(fp)));
+
+      root.appendChild(head);
+      root.appendChild(body);
+      return root;
+    }
+
     function listRow(it) {
       const row = document.createElement("div");
       row.className = "row";
@@ -1393,7 +1629,8 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       row.innerHTML =
         '<div class="primary">' + esc(primary) + '</div>' +
         (secondary && secondary !== primary ? '<div class="secondary">' + esc(secondary) + '</div>' : '');
-      row.addEventListener("click", () => openItem(it));
+      row.addEventListener("click", () => previewItem(it));
+      row.addEventListener("dblclick", () => openItem(it));
       bindContext(row, it);
       return row;
     }
@@ -1434,15 +1671,12 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       }
 
       if (tab === "text") {
-        const byFile = new Map();
-        for (const it of items) {
-          if (!it.filePath) continue;
-          const fp = String(it.filePath).replaceAll("\\\\", "/");
-          if (!byFile.has(fp)) byFile.set(fp, []);
-          byFile.get(fp).push(it);
-        }
-        const files = [...byFile.keys()].sort((a, b) => a.localeCompare(b));
-        for (const fp of files) out.appendChild(fileGroup(fp, byFile.get(fp)));
+        const tree = buildPathTree(items);
+        const topDirs = [...tree.dirs.keys()].sort((a, b) => a.localeCompare(b));
+        for (const name of topDirs) out.appendChild(renderDirNode(tree.dirs.get(name)));
+        // Files at workspace root (no folder prefix)
+        const rootFiles = [...tree.files.keys()].sort((a, b) => a.localeCompare(b));
+        for (const fp of rootFiles) out.appendChild(fileGroup(fp, tree.files.get(fp)));
         applySelectionToRows();
         return;
       }

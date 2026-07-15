@@ -34,12 +34,13 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:swiftFind.openReplace",
+    "onCommand:swiftFind.replaceInEditor",
     "onCommand:swiftFind.open",
     "onCommand:swiftFind.showWelcome",
     "onCommand:swiftFind.explorer.searchHere",
     "onCommand:swiftFind.explorer.replaceHere",
-    "onView:swiftFind.sidebar",
-    "onView:swiftFind.tasksExplorer"
+    "onView:swiftFind.tasksExplorer",
+    "onView:swiftFind.sidebarActions"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -47,15 +48,23 @@
       {
         "command": "swiftFind.open",
         "title": "%cmd.open%",
-        "shortTitle": "%cmd.open.short%"
+        "shortTitle": "%cmd.open.short%",
+        "icon": "$(search)"
       },
       {
         "command": "swiftFind.openFullscreen",
-        "title": "%cmd.openFullscreen%"
+        "title": "%cmd.openFullscreen%",
+        "icon": "$(window)"
       },
       {
         "command": "swiftFind.openReplace",
-        "title": "%cmd.openReplace%"
+        "title": "%cmd.openReplace%",
+        "icon": "$(replace-all)"
+      },
+      {
+        "command": "swiftFind.replaceInEditor",
+        "title": "%cmd.replaceInEditor%",
+        "icon": "$(replace)"
       },
       {
         "command": "swiftFind.showWelcome",
@@ -94,8 +103,8 @@
         "title": "%cmd.prevTab%"
       },
       {
-        "command": "swiftFind.focusSidebar",
-        "title": "%cmd.focusSidebar%"
+        "command": "swiftFind.focusTasks",
+        "title": "%cmd.focusTasks%"
       },
       {
         "command": "swiftFind.explorer.searchHere",
@@ -107,7 +116,8 @@
       },
       {
         "command": "swiftFind.tasks.refresh",
-        "title": "%cmd.tasks.refresh%"
+        "title": "%cmd.tasks.refresh%",
+        "icon": "$(refresh)"
       },
       {
         "command": "swiftFind.tasks.openTask",
@@ -135,6 +145,12 @@
         "mac": "cmd+alt+shift+h"
       },
       {
+        "command": "swiftFind.replaceInEditor",
+        "key": "ctrl+alt+shift+r",
+        "mac": "cmd+alt+shift+r",
+        "when": "editorTextFocus"
+      },
+      {
         "command": "swiftFind.open",
         "key": "ctrl+shift+j space",
         "mac": "cmd+shift+j space"
@@ -148,6 +164,12 @@
         "command": "swiftFind.openReplace",
         "key": "ctrl+shift+j h",
         "mac": "cmd+shift+j h"
+      },
+      {
+        "command": "swiftFind.replaceInEditor",
+        "key": "ctrl+shift+j r",
+        "mac": "cmd+shift+j r",
+        "when": "editorTextFocus"
       },
       {
         "command": "swiftFind.nextTab",
@@ -202,9 +224,10 @@
     "views": {
       "swiftFind": [
         {
-          "id": "swiftFind.sidebar",
-          "name": "%views.sidebar.name%",
-          "type": "webview"
+          "type": "webview",
+          "id": "swiftFind.sidebarActions",
+          "name": "%views.actions.name%",
+          "visibility": "visible"
         },
         {
           "id": "swiftFind.tasksExplorer",
@@ -213,6 +236,13 @@
       ]
     },
     "menus": {
+      "editor/context": [
+        {
+          "command": "swiftFind.replaceInEditor",
+          "when": "editorTextFocus",
+          "group": "1_modification@99"
+        }
+      ],
       "explorer/context": [
         {
           "command": "swiftFind.explorer.searchHere",
@@ -229,7 +259,7 @@
         {
           "command": "swiftFind.tasks.refresh",
           "when": "view == swiftFind.tasksExplorer",
-          "group": "navigation"
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [

@@ -1573,12 +1573,26 @@ async function replaceAllInScope(find, replace, options) {
 async function openResult(item, preserveFocus) {
   if (!item.filePath) return;
   const rootPath = getRootPath();
-  await vscode.window.showTextDocument(vscode.Uri.file(path.join(rootPath, item.filePath)), { preserveFocus });
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) return;
-  const pos = new vscode.Position(Math.max(0, (item.lineNumber || 1) - 1), Math.max(0, (item.column || 1) - 1));
-  editor.selection = new vscode.Selection(pos, pos);
-  editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+  await vscode.window.showTextDocument(vscode.Uri.file(path.join(rootPath, item.filePath)), {
+    preserveFocus: Boolean(preserveFocus)
+  });
+  const editor =
+    vscode.window.visibleTextEditors.find(
+      (e) => e.document.uri.fsPath === path.join(rootPath, item.filePath)
+    ) || vscode.window.activeTextEditor;
+  if (!editor || editor.document.lineCount <= 0) return;
+  const line = Math.min(Math.max(0, (item.lineNumber || 1) - 1), editor.document.lineCount - 1);
+  const col = Math.max(0, (item.column || 1) - 1);
+  const matchLen = Math.max(0, Number(item.matchLength) || 0);
+  const start = new vscode.Position(line, col);
+  let end = start;
+  if (matchLen > 0) {
+    const lineText = editor.document.lineAt(line).text;
+    const clamped = Math.min(matchLen, Math.max(0, lineText.length - col));
+    end = new vscode.Position(line, col + clamped);
+  }
+  editor.selection = new vscode.Selection(start, end);
+  editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenter);
 }
 
 module.exports = {
@@ -1590,6 +1604,7 @@ module.exports = {
   createSearchController,
   previewReplace,
   replaceAllInScope,
+  replaceInString,
   invalidatePathIndex,
   warmPathIndex,
   initPathIndexWatchers

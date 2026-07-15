@@ -1,11 +1,11 @@
 const vscode = require("vscode");
 const { openQuickSearch, markDirty, toggleOption, nextTab, prevTab } = require("./quickPickUi");
 const { openFullscreenSearch, pushFullscreenConfig } = require("./fullscreenUi");
-const { SwiftFindSidebarProvider, getSidebarProvider } = require("./sidebarView");
 const { TasksExplorerProvider } = require("./tasksExplorer");
-const { openReplacePanel } = require("./replaceUi");
+const { openReplacePanel, replaceInActiveEditor } = require("./replaceUi");
 const { initPathIndexWatchers, invalidatePathIndex } = require("./searchEngine");
 const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
+const { registerSidebarActions } = require("./sidebarActionsUi");
 
 function onTreeChanged() {
   invalidatePathIndex("fs");
@@ -40,7 +40,6 @@ function activate(context) {
 
   initPathIndexWatchers(context, {
     onInvalidate: (reason) => {
-      // Branch switch / checkout: invalidate QuickPick text cache too.
       if (reason === "git-head" || reason === "workspace") {
         markDirty();
       }
@@ -48,21 +47,17 @@ function activate(context) {
   });
 
   maybeShowWelcomeOnStartup(context).catch(() => {});
+  registerSidebarActions(context);
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("swiftFind.searchOnType")) return;
       pushFullscreenConfig();
-      getSidebarProvider()?.pushConfig?.();
     })
   );
 
   context.subscriptions.push(
     statusBarItem,
-    vscode.window.registerWebviewViewProvider(
-      "swiftFind.sidebar",
-      new SwiftFindSidebarProvider(context.extensionUri)
-    ),
     vscode.workspace.onDidSaveTextDocument((doc) => {
       markDirty();
       const p = String(doc?.uri?.fsPath || "").replaceAll("\\", "/").toLowerCase();
@@ -171,10 +166,11 @@ function activate(context) {
     vscode.commands.registerCommand("swiftFind.openReplace", (payload) => {
       openReplacePanel(payload && typeof payload === "object" ? payload : {});
     }),
+    vscode.commands.registerCommand("swiftFind.replaceInEditor", () => replaceInActiveEditor()),
     vscode.commands.registerCommand("swiftFind.showWelcome", () => openWelcomePage(context)),
-    vscode.commands.registerCommand("swiftFind.focusSidebar", async () => {
+    vscode.commands.registerCommand("swiftFind.focusTasks", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.swiftFind");
-      await vscode.commands.executeCommand("swiftFind.sidebar.focus");
+      await vscode.commands.executeCommand("swiftFind.tasksExplorer.focus");
     }),
     vscode.commands.registerCommand("swiftFind.toggleCaseSensitive", () => toggleOption("matchCase")),
     vscode.commands.registerCommand("swiftFind.toggleRegex", () => toggleOption("regex")),

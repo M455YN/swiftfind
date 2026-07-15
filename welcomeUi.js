@@ -87,7 +87,7 @@ function getWelcomeHtml(webview, extensionUri) {
           ["Otwórz wyszukiwanie", "Ctrl+Alt+Shift+Space", "swiftFind.open"],
           ["Pełny ekran wyników", "Ctrl+Alt+Shift+F", "swiftFind.openFullscreen"],
           ["Znajdź i zamień", "Ctrl+Alt+Shift+H", "swiftFind.openReplace"],
-          ["Panel boczny", "Widok SwiftFind → Panel wyszukiwania", "swiftFind.focusSidebar"]
+          ["Task Runner", "Widok SwiftFind → Task Runner", "swiftFind.focusTasks"]
         ],
         chordNote: "Na polskiej klawiaturze: Ctrl+Shift+J, potem Space / F / H",
         learn: "Warto wiedzieć",
@@ -118,7 +118,7 @@ function getWelcomeHtml(webview, extensionUri) {
           ["Open search", "Ctrl+Alt+Shift+Space", "swiftFind.open"],
           ["Fullscreen results", "Ctrl+Alt+Shift+F", "swiftFind.openFullscreen"],
           ["Find and replace", "Ctrl+Alt+Shift+H", "swiftFind.openReplace"],
-          ["Sidebar panel", "SwiftFind view → Search Panel", "swiftFind.focusSidebar"]
+          ["Task Runner", "SwiftFind view → Task Runner", "swiftFind.focusTasks"]
         ],
         chordNote: "Polish / AltGr fallback: Ctrl+Shift+J, then Space / F / H",
         learn: "Learn",
