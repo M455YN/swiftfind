@@ -4,14 +4,29 @@ const { isPolish } = require("./i18n");
 /** @type {vscode.WebviewPanel | null} */
 let welcomePanel = null;
 
+const WELCOME_VERSION_KEY = "swiftFind.lastWelcomeVersion";
+/** @deprecated legacy flag — migrated to version-based welcome */
 const WELCOME_STATE_KEY = "swiftFind.hasShownWelcome";
+
+function getExtensionVersion(context) {
+  return String(context.extension?.packageJSON?.version || "0.0.0");
+}
 
 /**
  * @param {vscode.ExtensionContext} context
- * @param {{ force?: boolean }=} opts
+ */
+async function markWelcomeSeen(context) {
+  await context.globalState.update(WELCOME_VERSION_KEY, getExtensionVersion(context));
+}
+
+/**
+ * @param {vscode.ExtensionContext} context
+ * @param {{ force?: boolean, isUpdate?: boolean }=} opts
  */
 async function openWelcomePage(context, opts = {}) {
   const title = isPolish() ? "Witaj w SwiftFind" : "Welcome to SwiftFind";
+  const version = getExtensionVersion(context);
+  const isUpdate = Boolean(opts.isUpdate);
 
   if (welcomePanel) {
     welcomePanel.title = title;
@@ -26,7 +41,7 @@ async function openWelcomePage(context, opts = {}) {
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [context.extensionUri] }
   );
   welcomePanel = panel;
-  panel.webview.html = getWelcomeHtml(panel.webview, context.extensionUri);
+  panel.webview.html = getWelcomeHtml(panel.webview, context.extensionUri, { version, isUpdate });
 
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (!msg || !msg.type) return;
@@ -41,14 +56,14 @@ async function openWelcomePage(context, opts = {}) {
       return;
     }
     if (msg.type === "dontShowAgain") {
-      await context.globalState.update(WELCOME_STATE_KEY, true);
+      await markWelcomeSeen(context);
       panel.dispose();
     }
   });
 
   panel.onDidDispose(() => {
     if (welcomePanel === panel) welcomePanel = null;
-    void context.globalState.update(WELCOME_STATE_KEY, true);
+    void markWelcomeSeen(context);
   });
 }
 
@@ -56,23 +71,37 @@ async function openWelcomePage(context, opts = {}) {
  * @param {vscode.ExtensionContext} context
  */
 async function maybeShowWelcomeOnStartup(context) {
-  if (context.globalState.get(WELCOME_STATE_KEY)) return;
-  await openWelcomePage(context);
+  const current = getExtensionVersion(context);
+  const last = context.globalState.get(WELCOME_VERSION_KEY);
+
+  // Migrate users who dismissed welcome before version tracking existed.
+  if (!last && context.globalState.get(WELCOME_STATE_KEY)) {
+    await markWelcomeSeen(context);
+    return;
+  }
+
+  if (last === current) return;
+  await openWelcomePage(context, { isUpdate: Boolean(last) });
 }
 
 /**
  * @param {vscode.Webview} webview
  * @param {vscode.Uri} extensionUri
+ * @param {{ version?: string, isUpdate?: boolean }=} meta
  */
-function getWelcomeHtml(webview, extensionUri) {
+function getWelcomeHtml(webview, extensionUri, meta = {}) {
   const pl = isPolish();
+  const version = String(meta.version || "");
+  const isUpdate = Boolean(meta.isUpdate);
   const iconUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "icon.png"));
   const csp = webview.cspSource;
 
   const L = pl
     ? {
-        getStarted: "Zacznij pracę ze SwiftFind",
-        tagline: "Szybkie wyszukiwanie plików, folderów, tekstu, symboli i poleceń — w jednym miejscu.",
+        getStarted: isUpdate ? `SwiftFind ${version}` : "Witaj w SwiftFind",
+        tagline: isUpdate
+          ? `Zaktualizowano do wersji ${version}. Szybkie wyszukiwanie plików, folderów, tekstu, symboli i poleceń — w jednym miejscu.`
+          : "Szybkie wyszukiwanie plików, folderów, tekstu, symboli i poleceń — w jednym miejscu.",
         start: "Start",
         openSearch: "Otwórz wyszukiwanie",
         openSearchDesc: "Pływające okno QuickPick",
@@ -99,11 +128,13 @@ function getWelcomeHtml(webview, extensionUri) {
           ["Indeks", "Buduje się w tle przy starcie i zmianie brancha"]
         ],
         tip: "Ponownie: Command Palette → „SwiftFind: Witaj”.",
-        dontShow: "Nie pokazuj przy starcie"
+        dontShow: "Nie pokazuj dla tej wersji"
       }
     : {
-        getStarted: "Get Started with SwiftFind",
-        tagline: "Fast search for files, folders, text, symbols, and commands — in one place.",
+        getStarted: isUpdate ? `SwiftFind ${version}` : "Welcome to SwiftFind",
+        tagline: isUpdate
+          ? `Updated to version ${version}. Fast search for files, folders, text, symbols, and commands — in one place.`
+          : "Fast search for files, folders, text, symbols, and commands — in one place.",
         start: "Start",
         openSearch: "Open search",
         openSearchDesc: "Floating QuickPick window",
@@ -130,7 +161,7 @@ function getWelcomeHtml(webview, extensionUri) {
           ["Index", "Warm on startup and after branch switches"]
         ],
         tip: "Reopen anytime: Command Palette → “SwiftFind: Welcome”.",
-        dontShow: "Don't show on startup"
+        dontShow: "Don't show for this version"
       };
 
   const tiles = [
@@ -422,5 +453,6 @@ function escapeHtml(text) {
 module.exports = {
   openWelcomePage,
   maybeShowWelcomeOnStartup,
+  WELCOME_VERSION_KEY,
   WELCOME_STATE_KEY
 };

@@ -19,6 +19,7 @@ let searchOptions = {
 let activeTab = "text";
 let activeQuickPick = null;
 let lastUpdateFn = null;
+let searchSeq = 0;
 
 const TABS = ["files", "folders", "text", "symbols", "commands"];
 const TAB_LABELS = {
@@ -112,8 +113,59 @@ function setQuickPickTitle(quickPick, count) {
 
 async function refreshSearch(quickPick, updateItems, value) {
   documentUpdated = true;
+  searchSeq += 1;
   if (value) await updateItems(value);
   else setQuickPickTitle(quickPick);
+}
+
+/**
+ * Run QuickPick search; ignore stale completions (same pattern as fullscreen requestId).
+ * @param {vscode.QuickPick<vscode.QuickPickItem>} quickPick
+ * @param {string} value
+ */
+async function runQuickPickSearch(quickPick, value) {
+  const q = String(value || "").trim();
+  if (!q) {
+    searchSeq += 1;
+    quickPick.busy = false;
+    quickPick.items = [];
+    cacheValue = "";
+    cacheItems = [];
+    setQuickPickTitle(quickPick, 0);
+    return;
+  }
+
+  if (!documentUpdated && cacheValue === q) return;
+
+  const reqId = ++searchSeq;
+  const tab = activeTab;
+  documentUpdated = false;
+  quickPick.busy = true;
+  quickPick.items = [{ label: t("Loading...", "Ladowanie..."), alwaysShow: true }];
+
+  try {
+    const items = await searchByTab(tab, q, searchOptions);
+    if (reqId !== searchSeq) return;
+    if (activeQuickPick !== quickPick) return;
+    if (activeTab !== tab) return;
+    if (String(quickPick.value || "").trim() !== q) return;
+
+    cacheValue = q;
+    cacheItems = items;
+    quickPick.items = items;
+    setQuickPickTitle(quickPick, items.length);
+  } catch (error) {
+    if (reqId !== searchSeq || activeQuickPick !== quickPick) return;
+    quickPick.items = [];
+    setQuickPickTitle(quickPick, 0);
+    vscode.window.showErrorMessage(
+      error instanceof Error ? error.message : t("Search failed", "Wyszukiwanie nie powiodlo sie")
+    );
+  } finally {
+    if (reqId === searchSeq && activeQuickPick === quickPick) {
+      quickPick.busy = false;
+    }
+  }
 }
 
 function openQuickSearch() {
@@ -135,22 +187,13 @@ function openQuickSearch() {
   const selected = vscode.window.activeTextEditor?.document.getText(vscode.window.activeTextEditor.selection);
   if (selected) quickPick.value = selected;
 
-  const updateItems = debounce(180, async (value) => {
-    if (!documentUpdated && cacheValue === value) return;
-    documentUpdated = false;
-    quickPick.busy = true;
-    quickPick.items = [{ label: t("Loading...", "Ladowanie..."), alwaysShow: true }];
-    const items = await searchByTab(activeTab, value, searchOptions);
-    cacheValue = value;
-    cacheItems = items;
-    quickPick.items = items;
-    setQuickPickTitle(quickPick, items.length);
-    quickPick.busy = false;
-  });
+  const updateItems = debounce(180, (value) => runQuickPickSearch(quickPick, value));
   lastUpdateFn = updateItems;
 
   quickPick.onDidChangeValue((value) => {
     if (!getConfig().searchOnType) {
+      searchSeq += 1;
+      quickPick.busy = false;
       quickPick.items = [
         {
           label: t("Press Enter to search…", "Nacisnij Enter, aby szukac…"),
@@ -161,25 +204,13 @@ function openQuickSearch() {
       quickPick.activeItems = quickPick.items;
       return;
     }
-    updateItems(value).catch((error) => {
-      quickPick.busy = false;
-      quickPick.items = [];
-      vscode.window.showErrorMessage(error instanceof Error ? error.message : t("Search failed", "Wyszukiwanie nie powiodlo sie"));
-    });
+    updateItems(value).catch(() => {});
   });
 
   quickPick.onDidAccept(async () => {
     const item = quickPick.selectedItems[0];
     if (!item || item._sfPendingSearch) {
-      try {
-        await updateItems(quickPick.value);
-      } catch (error) {
-        quickPick.busy = false;
-        quickPick.items = [];
-        vscode.window.showErrorMessage(
-          error instanceof Error ? error.message : t("Search failed", "Wyszukiwanie nie powiodlo sie")
-        );
-      }
+      await updateItems(quickPick.value);
       return;
     }
     if (item.commandId) {
