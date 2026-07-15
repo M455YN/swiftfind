@@ -2,6 +2,19 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [0.1.6] - 2026-07-15
+
+- Added **Action** sidebar section with VS Code-style tiles: **Fullscreen Search** and **Fullscreen Replace**; **Task Runner** remains below.
+- Removed the legacy sidebar search panel and selection sync (`sidebarView`, `uiSelectionState`).
+- Unified **Find + Replace** in one fullscreen panel (Find primary, expandable Replace row).
+- Added `swiftFind.searchOnType` setting (live search vs Enter-only) for fullscreen and QuickPick.
+- Added Explorer context menu actions: **Search Here** and **Replace Here**.
+- Added path index, streaming search results, and **Pause / Resume / Stop** controls in fullscreen.
+- Grouped fullscreen **Text** results in a nested folder → file → match tree with inline highlight preview.
+- Wired result preview in fullscreen (respects `swiftFind.preview`) and fixed stale-result races in QuickPick.
+- **Replace in editor** uses the built-in VS Code Find/Replace widget (`Ctrl+Alt+Shift+R`).
+- Restyled Welcome page like VS Code Getting Started; Welcome now reappears after each extension version update until dismissed for that version.
+
 ## [0.1.5] - 2026-05-22
 
 - Synced last selected search result between fullscreen results and the SwiftFind sidebar panel.
