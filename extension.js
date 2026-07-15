@@ -1,8 +1,7 @@
 const vscode = require("vscode");
 const { openQuickSearch, markDirty, toggleOption, nextTab, prevTab } = require("./quickPickUi");
-const { openFullscreenSearch } = require("./fullscreenUi");
-const { SwiftFindSidebarProvider } = require("./sidebarView");
-const { SolutionExplorerProvider } = require("./solutionExplorer");
+const { openFullscreenSearch, pushFullscreenConfig } = require("./fullscreenUi");
+const { SwiftFindSidebarProvider, getSidebarProvider } = require("./sidebarView");
 const { TasksExplorerProvider } = require("./tasksExplorer");
 const { openReplacePanel } = require("./replaceUi");
 const { initPathIndexWatchers, invalidatePathIndex } = require("./searchEngine");
@@ -11,6 +10,19 @@ const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
 function onTreeChanged() {
   invalidatePathIndex("fs");
   markDirty();
+}
+
+/**
+ * Relative workspace path for Explorer context menu URI.
+ * @param {vscode.Uri | undefined} uri
+ * @param {vscode.Uri[] | undefined} uris
+ */
+function scopePathFromExplorerArgs(uri, uris) {
+  const target = uri || (Array.isArray(uris) ? uris[0] : undefined);
+  if (!target || target.scheme === "untitled") return "";
+  const rel = vscode.workspace.asRelativePath(target, false);
+  if (!rel || rel === target.fsPath) return "";
+  return String(rel).replaceAll("\\", "/");
 }
 
 /**
@@ -24,7 +36,6 @@ function activate(context) {
   statusBarItem.tooltip = "Open SwiftFind";
   statusBarItem.show();
 
-  const solutionProvider = new SolutionExplorerProvider(rootPath || "", context.extensionUri);
   const tasksProvider = new TasksExplorerProvider(rootPath || "");
 
   initPathIndexWatchers(context, {
@@ -37,6 +48,14 @@ function activate(context) {
   });
 
   maybeShowWelcomeOnStartup(context).catch(() => {});
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("swiftFind.searchOnType")) return;
+      pushFullscreenConfig();
+      getSidebarProvider()?.pushConfig?.();
+    })
+  );
 
   context.subscriptions.push(
     statusBarItem,
@@ -54,9 +73,7 @@ function activate(context) {
     vscode.workspace.onDidDeleteFiles(onTreeChanged),
     vscode.workspace.onDidCreateFiles(onTreeChanged),
     vscode.workspace.onDidRenameFiles(onTreeChanged),
-    vscode.window.registerTreeDataProvider("swiftFind.solutionExplorer", solutionProvider),
     vscode.window.registerTreeDataProvider("swiftFind.tasksExplorer", tasksProvider),
-    vscode.commands.registerCommand("swiftFind.solutionExplorer.refresh", () => solutionProvider.refresh()),
     vscode.commands.registerCommand("swiftFind.tasks.refresh", () => tasksProvider.refresh()),
     vscode.commands.registerCommand("swiftFind.tasks.openTask", async (node) => {
       if (!node?.taskName) return;
@@ -110,35 +127,32 @@ function activate(context) {
       editor.selection = new vscode.Selection(pos, pos);
       editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
     }),
-    vscode.commands.registerCommand("swiftFind.solutionExplorer.openNode", async (node) => {
-      if (!node?.absPath || node.isDirectory) return;
-      await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(node.absPath));
-    }),
-    vscode.commands.registerCommand("swiftFind.solutionExplorer.revealInOS", async (node) => {
-      if (!node?.absPath) return;
-      await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(node.absPath));
-    }),
-    vscode.commands.registerCommand("swiftFind.solutionExplorer.copyPath", async (node) => {
-      if (!node?.absPath) return;
-      await vscode.env.clipboard.writeText(String(node.absPath));
-      vscode.window.showInformationMessage("Path copied");
-    }),
-    vscode.commands.registerCommand("swiftFind.solutionExplorer.searchHere", async (node) => {
-      if (!node?.relPath) return;
-      await vscode.commands.executeCommand("swiftFind.openFullscreen", {
+    vscode.commands.registerCommand("swiftFind.explorer.searchHere", async (uri, uris) => {
+      const scopePath = scopePathFromExplorerArgs(uri, uris);
+      if (!scopePath) {
+        vscode.window.showWarningMessage(
+          "SwiftFind: open a workspace folder to search from Explorer."
+        );
+        return;
+      }
+      await openFullscreenSearch({
         query: "",
-        options: {
-          scopePath: node.relPath
-        }
+        options: { scopePath }
       });
     }),
-    vscode.commands.registerCommand("swiftFind.solutionExplorer.replaceHere", async (node) => {
-      if (!node?.relPath) return;
+    vscode.commands.registerCommand("swiftFind.explorer.replaceHere", async (uri, uris) => {
+      const scopePath = scopePathFromExplorerArgs(uri, uris);
+      if (!scopePath) {
+        vscode.window.showWarningMessage(
+          "SwiftFind: open a workspace folder to replace from Explorer."
+        );
+        return;
+      }
       openReplacePanel({
         find: "",
         replace: "",
         options: {
-          scopePath: node.relPath,
+          scopePath,
           matchCase: false,
           wholeWord: false,
           useRegex: false,
@@ -147,10 +161,6 @@ function activate(context) {
           excludeSearchIgnored: true
         }
       });
-    }),
-    vscode.commands.registerCommand("swiftFind.focusSolutionExplorer", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.swiftFind");
-      await vscode.commands.executeCommand("swiftFind.solutionExplorer.focus");
     }),
     vscode.commands.registerCommand("swiftFind.open", () => {
       openQuickSearch();

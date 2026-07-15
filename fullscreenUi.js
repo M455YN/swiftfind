@@ -1,8 +1,15 @@
 const vscode = require("vscode");
 const path = require("path");
-const { searchByTabStreaming, openResult, createSearchController } = require("./searchEngine");
+const {
+  searchByTabStreaming,
+  openResult,
+  createSearchController,
+  previewReplace,
+  replaceAllInScope,
+  getConfig
+} = require("./searchEngine");
 const { isPolish } = require("./i18n");
-const { openReplacePanel } = require("./replaceUi");
+const { markDirty } = require("./quickPickUi");
 const { setLastSelection } = require("./uiSelectionState");
 const { getSidebarProvider } = require("./sidebarView");
 
@@ -16,6 +23,8 @@ function normalizePayload(payload) {
   if (typeof payload === "string") {
     return {
       query: payload,
+      replace: "",
+      showReplace: false,
       options: {
         matchCase: false,
         wholeWord: false,
@@ -28,7 +37,9 @@ function normalizePayload(payload) {
     };
   }
   return {
-    query: payload?.query || "",
+    query: payload?.query || payload?.find || "",
+    replace: String(payload?.replace ?? ""),
+    showReplace: Boolean(payload?.showReplace),
     options: {
       matchCase: Boolean(payload?.options?.matchCase),
       wholeWord: Boolean(payload?.options?.wholeWord),
@@ -38,6 +49,18 @@ function normalizePayload(payload) {
       excludeSearchIgnored: payload?.options?.excludeSearchIgnored !== false,
       scopePath: String(payload?.options?.scopePath || "")
     }
+  };
+}
+
+function optionsFromMessage(msg) {
+  return {
+    matchCase: Boolean(msg.matchCase),
+    wholeWord: Boolean(msg.wholeWord),
+    useRegex: Boolean(msg.useRegex),
+    fuzzy: Boolean(msg.fuzzy),
+    excludeGitIgnored: Boolean(msg.excludeGitIgnored),
+    excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
+    scopePath: String(msg.scopePath || "")
   };
 }
 
@@ -157,20 +180,53 @@ function wireFullscreenMessages(panel) {
       return;
     }
 
-    if (msg.type === "openReplace") {
-      openReplacePanel({
-        find: String(msg.find || ""),
-        replace: String(msg.replace || ""),
-        options: {
-          matchCase: Boolean(msg.matchCase),
-          wholeWord: Boolean(msg.wholeWord),
-          useRegex: Boolean(msg.useRegex),
-          fuzzy: Boolean(msg.fuzzy),
-          excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
-          scopePath: String(msg.scopePath || "")
-        }
-      });
+    if (msg.type === "previewReplace") {
+      panel.webview.postMessage({ type: "replacePreviewStarted" });
+      try {
+        const r = await previewReplace(String(msg.find || ""), String(msg.replace || ""), optionsFromMessage(msg));
+        panel.webview.postMessage({ type: "replacePreviewResult", ...r });
+      } catch (error) {
+        panel.webview.postMessage({
+          type: "replacePreviewResult",
+          ok: false,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
+    if (msg.type === "replaceAll") {
+      const pl = isPolish();
+      const findStr = String(msg.find || "").trim();
+      const opts = optionsFromMessage(msg);
+      const prev = await previewReplace(findStr, String(msg.replace || ""), { ...opts, lightPreview: true });
+      if (!prev.ok) {
+        panel.webview.postMessage({ type: "replaceResult", ok: false, message: prev.message || "" });
+        return;
+      }
+      if (!prev.occurrences) {
+        panel.webview.postMessage({
+          type: "replaceResult",
+          ok: true,
+          changedFiles: 0,
+          occurrences: 0,
+          message: pl ? "Brak dopasowań." : "No matches."
+        });
+        return;
+      }
+      const yes = pl ? "Zamień" : "Replace";
+      const no = pl ? "Anuluj" : "Cancel";
+      const msgBody = pl
+        ? `Zamienić ${prev.occurrences} wystąpień w ${prev.files} plikach?`
+        : `Replace ${prev.occurrences} occurrence(s) in ${prev.files} file(s)?`;
+      const choice = await vscode.window.showWarningMessage(msgBody, { modal: true }, yes, no);
+      if (choice !== yes) {
+        panel.webview.postMessage({ type: "replaceResult", ok: false, cancelled: true });
+        return;
+      }
+      const r = await replaceAllInScope(findStr, String(msg.replace || ""), opts);
+      if (r.ok && r.changedFiles) markDirty();
+      panel.webview.postMessage({ type: "replaceResult", ...r });
     }
   });
 }
@@ -188,11 +244,11 @@ async function moveFullscreenTabToFirst() {
 }
 
 /**
- * @param {{query?:string, options?:{matchCase?:boolean, wholeWord?:boolean, useRegex?:boolean}} | string | undefined} payload
+ * @param {{query?:string, find?:string, replace?:string, showReplace?:boolean, options?:Record<string, unknown>} | string | undefined} payload
  */
 async function openFullscreenSearch(payload) {
-  const { query, options } = normalizePayload(payload);
-  const title = isPolish() ? "Wyniki SwiftFind" : "SwiftFind Results";
+  const { query, options, replace, showReplace } = normalizePayload(payload);
+  const title = isPolish() ? "Szukaj w plikach" : "Find in Files";
 
   if (fullscreenPanel) {
     fullscreenPanel.title = title;
@@ -206,6 +262,8 @@ async function openFullscreenSearch(payload) {
     fullscreenPanel.webview.postMessage({
       type: "hydrate",
       query,
+      replace,
+      showReplace,
       options
     });
     return;
@@ -220,7 +278,7 @@ async function openFullscreenSearch(payload) {
   fullscreenPanel = panel;
   searchSeq = 0;
   activeSearchController = null;
-  panel.webview.html = getHtml(query || "", options);
+  panel.webview.html = getHtml(query || "", options, { replace, showReplace });
   wireFullscreenMessages(panel);
 
   panel.onDidDispose(() => {
@@ -232,7 +290,6 @@ async function openFullscreenSearch(payload) {
     }
   });
 
-  // Let the editor tab register, then park it as the first tab in the group.
   setTimeout(() => {
     if (fullscreenPanel === panel) {
       void moveFullscreenTabToFirst();
@@ -240,108 +297,451 @@ async function openFullscreenSearch(payload) {
   }, 30);
 }
 
-function getHtml(initialQuery, initialOptions) {
+function getHtml(initialQuery, initialOptions, extras = {}) {
+  const initialReplace = String(extras.replace || "");
+  const initialShowReplace = Boolean(extras.showReplace);
   const pl = isPolish();
   const L = {
-    resultsTitle: pl ? "Wyniki SwiftFind" : "SwiftFind Results",
+    resultsTitle: pl ? "Szukaj w plikach" : "Find in Files",
     files: pl ? "Pliki" : "Files",
     folders: pl ? "Foldery" : "Folders",
     text: pl ? "Tekst" : "Text",
     symbols: pl ? "Symbole" : "Symbols",
     commands: pl ? "Polecenia" : "Commands",
     search: pl ? "Szukaj" : "Search",
-    query: pl ? "Fraza wyszukiwania" : "Search query",
-    noResults: pl ? "Brak wynikow" : "No results found",
-    matchCase: pl ? "Uwzgledniaj wielkosc liter" : "Match Case",
-    wholeWord: pl ? "Dopasuj cale slowo" : "Match Whole Word",
-    regex: pl ? "Regex" : "Regex",
-    fuzzy: pl ? "Fuzzy" : "Fuzzy",
-    exclGit: pl ? "Pomin Git Ignored" : "Exclude Git Ignored",
-    exclSearch: pl ? "Pomin .searchignore" : "Exclude Search Ignored",
-    results: pl ? "wynikow" : "results",
-    scope: pl ? "Zakres" : "Scope",
-    clearScope: pl ? "Wyczyść zakres" : "Clear Scope",
-    findReplace: pl ? "Znajdź i zamień…" : "Find and replace…",
+    query: pl ? "Szukaj w projekcie…" : "Search in project…",
+    noResults: pl ? "Brak wyników" : "No results found",
+    matchCase: pl ? "Uwzględniaj wielkość liter (Alt+C)" : "Match Case (Alt+C)",
+    wholeWord: pl ? "Całe słowa (Alt+W)" : "Words (Alt+W)",
+    regex: pl ? "Regex (Alt+R)" : "Regex (Alt+R)",
+    fuzzy: pl ? "Fuzzy (Alt+F)" : "Fuzzy (Alt+F)",
+    exclGit: pl ? "Pomiń Git ignored (Alt+G)" : "Exclude Git ignored (Alt+G)",
+    exclSearch: pl ? "Pomiń .searchignore (Alt+S)" : "Exclude .searchignore (Alt+S)",
+    results: pl ? "wyników" : "results",
+    matches: pl ? "trafień" : "matches",
+    match: pl ? "trafienie" : "match",
+    scope: pl ? "Zakres" : "Directory",
+    clearScope: pl ? "Wyczyść" : "Clear",
+    findReplace: pl ? "Zamień" : "Replace",
+    replaceWith: pl ? "Zamień na" : "Replace",
+    replacePreview: pl ? "Podgląd zamiany" : "Preview replace",
+    replaceAll: pl ? "Zamień wszystko" : "Replace All",
     searching: pl ? "Wyszukiwanie…" : "Searching…",
-    typeToSearch: pl ? "Zacznij pisać, wyniki pojawią się na żywo." : "Start typing — results update live.",
+    replaceSearching: pl ? "Podgląd zamiany…" : "Building replace preview…",
+    typeToSearch: pl ? "Wpisz frazę — wyniki pojawią się na żywo." : "Type to search — results update live.",
+    typeThenEnter: pl ? "Wpisz frazę i naciśnij Enter." : "Type a query, then press Enter.",
     foundSoFar: pl ? "znaleziono" : "found",
     pause: pl ? "Wstrzymaj" : "Pause",
     resume: pl ? "Wznów" : "Resume",
     stop: pl ? "Zatrzymaj" : "Stop",
     paused: pl ? "Wstrzymane…" : "Paused…",
-    stopped: pl ? "zatrzymano" : "stopped"
+    stopped: pl ? "zatrzymano" : "stopped",
+    expandAll: pl ? "Rozwiń wszystko" : "Expand all",
+    collapseAll: pl ? "Zwiń wszystko" : "Collapse all",
+    filesWord: pl ? "plików" : "files",
+    occurrences: pl ? "wystąpień" : "occurrences"
   };
+  const searchOnType = getConfig().searchOnType !== false;
+  const queryPlaceholder = searchOnType ? L.query : L.typeThenEnter;
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); margin: 0; }
-    .top { position: sticky; top: 0; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); padding: 10px 12px 0; display: grid; grid-template-columns: 1fr; gap: 8px; z-index: 5; }
-    .headline { font-size: 12px; font-weight: 600; opacity: .9; letter-spacing: .2px; }
-    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-    .tab { padding: 4px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; font-size: 12px; }
-    .tab.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-list-activeSelectionBackground); }
-    .searchbar { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; }
-    .searchbar button:disabled { opacity: 0.45; cursor: default; }
-    .opts { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 4px 10px; font-size: 12px; opacity: 0.95; border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 6px 8px; }
-    .scopebar {
+    :root {
+      --sf-border: var(--vscode-panel-border, rgba(127,127,127,.35));
+      --sf-muted: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
+      --sf-hit: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 179, 8, .42));
+      --sf-hit-border: var(--vscode-editor-findMatchBorder, rgba(234, 179, 8, .75));
+      --sf-gutter: color-mix(in srgb, var(--vscode-foreground) 42%, transparent);
+      --sf-row-h: 22px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      font-family: var(--vscode-font-family);
+      font-size: 13px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+    }
+    .chrome {
+      position: sticky;
+      top: 0;
+      z-index: 8;
+      background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+      border-bottom: 1px solid var(--sf-border);
+      padding: 8px 12px 0;
+      display: grid;
+      gap: 8px;
+    }
+    .title-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      text-transform: none;
+    }
+    .title-meta {
+      font-size: 11px;
+      color: var(--sf-muted);
+      white-space: nowrap;
+    }
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--sf-border);
+      margin: 0 -12px;
+      padding: 0 12px;
+    }
+    .tab {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--sf-muted);
+      padding: 7px 11px 8px;
+      margin-bottom: -1px;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+    }
+    .tab:hover { color: var(--vscode-foreground); }
+    .tab.active {
+      color: var(--vscode-foreground);
+      border-bottom-color: var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+      font-weight: 600;
+    }
+    .find-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .find-field {
+      display: flex;
+      align-items: stretch;
+      border: 1px solid var(--vscode-input-border, var(--sf-border));
+      border-radius: 3px;
+      background: var(--vscode-input-background);
+      overflow: hidden;
+      min-height: 28px;
+    }
+    .find-field:focus-within {
+      border-color: var(--vscode-focusBorder);
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: -1px;
+    }
+    #q, #replace {
+      flex: 1;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--vscode-input-foreground);
+      padding: 5px 10px;
+      font: inherit;
+      min-width: 0;
+    }
+    #q::placeholder, #replace::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+    .togs {
+      display: flex;
+      align-items: center;
+      gap: 1px;
+      padding: 2px 3px 2px 6px;
+      border-left: 1px solid var(--sf-border);
+    }
+    .tog {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 22px;
+      border-radius: 3px;
+      cursor: pointer;
+      color: var(--sf-muted);
+      user-select: none;
+    }
+    .tog input {
+      position: absolute;
+      opacity: 0;
+      inset: 0;
+      margin: 0;
+      cursor: pointer;
+    }
+    .tog span {
+      font-size: 11px;
+      font-weight: 700;
+      font-family: var(--vscode-editor-font-family), Consolas, monospace;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .tog:hover { background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18)); color: var(--vscode-foreground); }
+    .tog:has(input:checked) {
+      background: var(--vscode-inputOption-activeBackground, color-mix(in srgb, var(--vscode-focusBorder) 28%, transparent));
+      color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+      box-shadow: inset 0 0 0 1px var(--vscode-inputOption-activeBorder, var(--vscode-focusBorder));
+    }
+    .find-actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 3px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      padding: 4px 9px;
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      min-height: 28px;
+    }
+    .btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
+    .btn:disabled { opacity: .45; cursor: default; }
+    .btn.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    .btn.primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+    .toolbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 4px 0 8px;
-      font-size: 12px;
-      opacity: 0.9;
+      padding-bottom: 8px;
+      flex-wrap: wrap;
     }
-    .scopebtn {
-      padding: 4px 8px;
+    .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .scope {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: min(520px, 70vw);
       font-size: 11px;
-      border-radius: 4px;
-      border: 1px solid var(--vscode-input-border);
-      background: transparent;
-      color: var(--vscode-foreground);
-      cursor: pointer;
+      color: var(--sf-muted);
+      min-height: 22px;
     }
-    .scopebtn:hover { background: var(--vscode-list-hoverBackground); }
-    .opts label { display: inline-flex; gap: 6px; align-items: center; line-height: 1.3; }
-    #q, #go, #btnPause, #btnStop { padding: 7px 9px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
-    #go, #btnPause, #btnStop { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
-    #go:hover:not(:disabled), #btnPause:hover:not(:disabled), #btnStop:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground); }
+    .scope.has-path {
+      padding: 2px 6px 2px 8px;
+      border-radius: 3px;
+      background: color-mix(in srgb, var(--vscode-badge-background, #888) 22%, transparent);
+      color: var(--vscode-foreground);
+    }
+    .scope #scopeInfo {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .linkish {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      padding: 0;
+    }
+    .linkish:hover { text-decoration: underline; }
     .progress {
       height: 2px;
-      width: 100%;
       margin: 0 -12px;
       width: calc(100% + 24px);
-      background: transparent;
       overflow: hidden;
       opacity: 0;
       transition: opacity .15s ease;
+      background: transparent;
     }
     .progress.active { opacity: 1; }
-    .progress.paused > span { animation-play-state: paused; opacity: 0.55; }
+    .progress.paused > span { animation-play-state: paused; opacity: .5; }
     .progress > span {
       display: block;
       height: 100%;
-      width: 35%;
+      width: 34%;
       background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
-      animation: sf-indeterminate 1.1s ease-in-out infinite;
+      animation: sf-indeterminate 1.05s ease-in-out infinite;
     }
     @keyframes sf-indeterminate {
       0% { transform: translateX(-120%); }
       100% { transform: translateX(320%); }
     }
-    .content { padding: 10px 12px; }
-    .folder { margin-top: 12px; font-weight: 600; opacity: 0.9; border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: 4px; }
-    .row { padding: 7px 8px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
-    .row:hover { background: var(--vscode-list-hoverBackground); border-color: var(--vscode-list-hoverBackground); }
-    .row.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); border-color: var(--vscode-list-activeSelectionBackground); }
-    .row.selected .meta, .row.selected .detail { color: inherit; opacity: 0.92; }
-    .meta { opacity: 0.8; font-size: 12px; }
-    .detail { font-family: var(--vscode-editor-font-family); font-size: 12px; opacity: 0.9; }
-    #summary { position: sticky; top: 0; z-index: 3; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border); }
-    #summary.busy { opacity: 1; }
+    #summary {
+      flex: 0 0 auto;
+      padding: 6px 12px;
+      font-size: 11px;
+      color: var(--sf-muted);
+      border-bottom: 1px solid var(--sf-border);
+      background: var(--vscode-editor-background);
+    }
+    #summary.busy { color: var(--vscode-foreground); }
+    #out {
+      flex: 1 1 auto;
+      overflow: auto;
+      padding: 4px 0 18px;
+    }
+    .empty {
+      padding: 28px 16px;
+      text-align: center;
+      color: var(--sf-muted);
+      font-size: 12px;
+    }
+    .file {
+      margin: 0;
+    }
+    .file-head {
+      display: grid;
+      grid-template-columns: 16px 1fr auto;
+      gap: 6px;
+      align-items: center;
+      padding: 3px 12px 3px 8px;
+      min-height: var(--sf-row-h);
+      cursor: pointer;
+      user-select: none;
+    }
+    .file-head:hover { background: var(--vscode-list-hoverBackground); }
+    .chev {
+      width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--sf-muted);
+      font-size: 10px;
+      transform: rotate(90deg);
+      transition: transform .12s ease;
+    }
+    .file.collapsed .chev { transform: rotate(0deg); }
+    .file.collapsed .file-body { display: none; }
+    .file-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .file-path {
+      margin-left: 8px;
+      font-weight: 400;
+      color: var(--sf-muted);
+      font-size: 11px;
+    }
+    .badge {
+      font-size: 10px;
+      min-width: 18px;
+      text-align: center;
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      font-variant-numeric: tabular-nums;
+    }
+    .match {
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      gap: 8px;
+      align-items: baseline;
+      padding: 1px 12px 1px 30px;
+      min-height: var(--sf-row-h);
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .match:hover { background: var(--vscode-list-hoverBackground); }
+    .match.selected {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    .match.selected .ln { color: inherit; opacity: .85; }
+    .ln {
+      font-family: var(--vscode-editor-font-family), Consolas, monospace;
+      font-size: 11px;
+      color: var(--sf-gutter);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      user-select: none;
+    }
+    .code {
+      font-family: var(--vscode-editor-font-family), Consolas, monospace;
+      font-size: 12px;
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .code mark {
+      background: var(--sf-hit);
+      color: inherit;
+      border-radius: 2px;
+      box-shadow: inset 0 0 0 1px var(--sf-hit-border);
+      padding: 0 1px;
+    }
+    .code.after mark {
+      background: var(--vscode-diffEditor-insertedTextBackground, rgba(34, 197, 94, .28));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground, #3fb950) 55%, transparent);
+    }
+    .code.after { opacity: .92; }
+    .code-stack { min-width: 0; display: grid; gap: 2px; }
+    .match.replace-match { align-items: start; padding-top: 3px; padding-bottom: 4px; }
+    .match.replace-match .ln { padding-top: 2px; }
+    .replace-row {
+      display: none;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+    body.replace-open .replace-row { display: grid; }
+    body.replace-open #btnReplace { font-weight: 600; }
+    .replace-actions { display: none; gap: 6px; align-items: center; }
+    body.replace-open .replace-actions { display: inline-flex; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1px;
+      padding: 4px 12px 4px 14px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      min-height: 28px;
+    }
+    .row:hover { background: var(--vscode-list-hoverBackground); }
+    .row.selected {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+    }
+    .row .primary {
+      font-weight: 600;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row .secondary {
+      font-size: 11px;
+      color: var(--sf-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row.selected .secondary { color: inherit; opacity: .85; }
+    .section-label {
+      padding: 8px 12px 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--sf-muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
     .ctx {
       position: fixed;
       z-index: 100;
@@ -349,7 +749,7 @@ function getHtml(initialQuery, initialOptions) {
       border: 1px solid var(--vscode-menu-border);
       background: var(--vscode-menu-background);
       color: var(--vscode-menu-foreground);
-      border-radius: 8px;
+      border-radius: 4px;
       box-shadow: 0 8px 18px rgba(0,0,0,.28);
       overflow: hidden;
       display: none;
@@ -361,47 +761,70 @@ function getHtml(initialQuery, initialOptions) {
       border-radius: 0;
       background: transparent;
       color: inherit;
-      padding: 8px 10px;
+      padding: 7px 10px;
       cursor: pointer;
+      font: inherit;
+      font-size: 12px;
     }
     .ctx button:hover { background: var(--vscode-list-hoverBackground); }
+    @media (max-width: 720px) {
+      .find-row { grid-template-columns: 1fr; }
+      .find-actions { justify-content: flex-end; }
+    }
   </style>
 </head>
-<body>
-  <div class="top">
-    <div class="headline">${L.resultsTitle}</div>
-    <div class="tabs" id="tabs">
-      <button class="tab" data-tab="files">${L.files}</button>
-      <button class="tab" data-tab="folders">${L.folders}</button>
-      <button class="tab active" data-tab="text">${L.text}</button>
-      <button class="tab" data-tab="symbols">${L.symbols}</button>
-      <button class="tab" data-tab="commands">${L.commands}</button>
+<body class="${initialShowReplace ? "replace-open" : ""}">
+  <div class="chrome">
+    <div class="title-row">
+      <div class="title">${L.resultsTitle}</div>
+      <div class="title-meta" id="titleMeta"></div>
     </div>
-    <div class="searchbar">
-      <input id="q" placeholder="${L.query}" value="${escapeHtml(initialQuery)}" />
-      <button id="go">${L.search}</button>
-      <button id="btnPause" type="button" disabled>${L.pause}</button>
-      <button id="btnStop" type="button" disabled>${L.stop}</button>
+    <div class="tabs" id="tabs" role="tablist">
+      <button class="tab" data-tab="files" role="tab">${L.files}</button>
+      <button class="tab" data-tab="folders" role="tab">${L.folders}</button>
+      <button class="tab active" data-tab="text" role="tab">${L.text}</button>
+      <button class="tab" data-tab="symbols" role="tab">${L.symbols}</button>
+      <button class="tab" data-tab="commands" role="tab">${L.commands}</button>
     </div>
-    <div style="margin-top:4px;">
-      <button type="button" id="btnReplace" class="scopebtn">${L.findReplace}</button>
+    <div class="find-row">
+      <div class="find-field">
+        <input id="q" placeholder="${queryPlaceholder}" value="${escapeHtml(initialQuery)}" spellcheck="false" autocomplete="off" />
+        <div class="togs" aria-label="options">
+          <label class="tog" title="${L.matchCase}"><input id="matchCase" type="checkbox" ${initialOptions.matchCase ? "checked" : ""} /><span>Aa</span></label>
+          <label class="tog" title="${L.wholeWord}"><input id="wholeWord" type="checkbox" ${initialOptions.wholeWord ? "checked" : ""} /><span>W</span></label>
+          <label class="tog" title="${L.regex}"><input id="useRegex" type="checkbox" ${initialOptions.useRegex ? "checked" : ""} /><span>.*</span></label>
+          <label class="tog" title="${L.fuzzy}"><input id="fuzzy" type="checkbox" ${initialOptions.fuzzy ? "checked" : ""} /><span>~</span></label>
+          <label class="tog" title="${L.exclGit}"><input id="excludeGitIgnored" type="checkbox" ${initialOptions.excludeGitIgnored ? "checked" : ""} /><span>G</span></label>
+          <label class="tog" title="${L.exclSearch}"><input id="excludeSearchIgnored" type="checkbox" ${initialOptions.excludeSearchIgnored ? "checked" : ""} /><span>S</span></label>
+        </div>
+      </div>
+      <div class="find-actions">
+        <button class="btn primary" id="go" type="button">${L.search}</button>
+        <button class="btn" id="btnPause" type="button" disabled>${L.pause}</button>
+        <button class="btn" id="btnStop" type="button" disabled>${L.stop}</button>
+      </div>
     </div>
-    <div class="opts">
-      <label><input id="matchCase" type="checkbox" ${initialOptions.matchCase ? "checked" : ""} /> ${L.matchCase} (Alt+C)</label>
-      <label><input id="wholeWord" type="checkbox" ${initialOptions.wholeWord ? "checked" : ""} /> ${L.wholeWord} (Alt+W)</label>
-      <label><input id="useRegex" type="checkbox" ${initialOptions.useRegex ? "checked" : ""} /> Regex (Alt+R)</label>
-      <label><input id="fuzzy" type="checkbox" ${initialOptions.fuzzy ? "checked" : ""} /> ${L.fuzzy} (Alt+F)</label>
-      <label><input id="excludeGitIgnored" type="checkbox" ${initialOptions.excludeGitIgnored ? "checked" : ""} /> ${L.exclGit} (Alt+G)</label>
-      <label><input id="excludeSearchIgnored" type="checkbox" ${initialOptions.excludeSearchIgnored ? "checked" : ""} /> ${L.exclSearch} (Alt+S)</label>
+    <div class="replace-row">
+      <div class="find-field">
+        <input id="replace" placeholder="${L.replaceWith}" value="${escapeHtml(initialReplace)}" spellcheck="false" autocomplete="off" />
+      </div>
+      <div class="find-actions">
+        <button class="btn" id="btnReplacePreview" type="button">${L.replacePreview}</button>
+        <button class="btn primary" id="btnReplaceAll" type="button">${L.replaceAll}</button>
+      </div>
     </div>
-    <div class="scopebar">
-      <div id="scopeInfo"></div>
-      <button id="clearScope" class="scopebtn">${L.clearScope}</button>
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <button type="button" id="btnReplace" class="btn">${L.findReplace}</button>
+        <button type="button" id="btnExpand" class="btn">${L.expandAll}</button>
+        <button type="button" id="btnCollapse" class="btn">${L.collapseAll}</button>
+        <div class="scope" id="scopeWrap"><span id="scopeInfo"></span><button type="button" id="clearScope" class="linkish" hidden>${L.clearScope}</button></div>
+      </div>
     </div>
     <div class="progress" id="progress" aria-hidden="true"><span></span></div>
   </div>
-  <div class="content" id="summary" style="padding-top:8px; opacity:.85; font-size:12px;"></div>
-  <div class="content" id="out"></div>
+  <div id="summary"></div>
+  <div id="out"></div>
   <div id="ctx" class="ctx"><button id="ctxReveal">${pl ? "Pokaż w Eksploratorze Windows" : "Show in Windows Explorer"}</button></div>
   <script>
     const vscode = acquireVsCodeApi();
@@ -409,8 +832,15 @@ function getHtml(initialQuery, initialOptions) {
     const go = document.getElementById("go");
     const btnPause = document.getElementById("btnPause");
     const btnStop = document.getElementById("btnStop");
+    const btnExpand = document.getElementById("btnExpand");
+    const btnCollapse = document.getElementById("btnCollapse");
+    const btnReplace = document.getElementById("btnReplace");
+    const btnReplacePreview = document.getElementById("btnReplacePreview");
+    const btnReplaceAll = document.getElementById("btnReplaceAll");
+    const replaceEl = document.getElementById("replace");
     const out = document.getElementById("out");
     const summary = document.getElementById("summary");
+    const titleMeta = document.getElementById("titleMeta");
     const progress = document.getElementById("progress");
     const ctx = document.getElementById("ctx");
     const ctxReveal = document.getElementById("ctxReveal");
@@ -422,6 +852,7 @@ function getHtml(initialQuery, initialOptions) {
     const excludeGitIgnored = document.getElementById("excludeGitIgnored");
     const excludeSearchIgnored = document.getElementById("excludeSearchIgnored");
     const scopeInfo = document.getElementById("scopeInfo");
+    const scopeWrap = document.getElementById("scopeWrap");
     const clearScopeBtn = document.getElementById("clearScope");
     let scopePath = ${JSON.stringify(initialOptions.scopePath || "")};
     let activeTab = "text";
@@ -433,6 +864,30 @@ function getHtml(initialQuery, initialOptions) {
     let activeRequestId = 0;
     let searching = false;
     let paused = false;
+    let replaceOpen = ${initialShowReplace ? "true" : "false"};
+    /** @type {"search"|"replacePreview"} */
+    let viewMode = "search";
+    let lastSearchItems = [];
+    let lastSearchTab = "text";
+    let searchOnType = ${searchOnType ? "true" : "false"};
+    const collapsedFiles = new Set();
+
+    function emptyHintText() {
+      return searchOnType ? "${L.typeToSearch}" : "${L.typeThenEnter}";
+    }
+
+    function refreshQueryPlaceholder() {
+      q.placeholder = searchOnType ? "${L.query}" : "${L.typeThenEnter}";
+    }
+
+    function setReplaceOpen(on) {
+      replaceOpen = !!on;
+      document.body.classList.toggle("replace-open", replaceOpen);
+      if (!replaceOpen && viewMode === "replacePreview") {
+        viewMode = "search";
+        if (lastSearchItems.length) render(lastSearchItems, lastSearchTab, { partial: false, stopped: false });
+      }
+    }
 
     function itemKey(it) {
       if (!it) return "";
@@ -469,6 +924,7 @@ function getHtml(initialQuery, initialOptions) {
       summary.classList.toggle("busy", searching);
       if (searching) {
         summary.textContent = label || (paused ? "${L.paused}" : "${L.searching}");
+        titleMeta.textContent = paused ? "${L.paused}" : "${L.searching}";
       }
       updateControlButtons();
     }
@@ -489,15 +945,23 @@ function getHtml(initialQuery, initialOptions) {
 
     function applySelectionToRows() {
       if (!lastSelectedKey) return;
-      for (const row of out.querySelectorAll(".row")) {
+      for (const row of out.querySelectorAll(".match, .row")) {
         row.classList.toggle("selected", row.dataset.key === lastSelectedKey);
       }
-      const sel = out.querySelector(".row.selected");
+      const sel = out.querySelector(".match.selected, .row.selected");
       if (sel) sel.scrollIntoView({ block: "nearest" });
     }
 
     function refreshScopeInfo() {
-      scopeInfo.textContent = scopePath ? "${L.scope}: " + scopePath : "";
+      if (scopePath) {
+        scopeInfo.textContent = "${L.scope}: " + scopePath;
+        scopeWrap.classList.add("has-path");
+        clearScopeBtn.hidden = false;
+      } else {
+        scopeInfo.textContent = "";
+        scopeWrap.classList.remove("has-path");
+        clearScopeBtn.hidden = true;
+      }
     }
 
     function run(immediate) {
@@ -505,14 +969,17 @@ function getHtml(initialQuery, initialOptions) {
       if (!query) {
         if (debounceTimer) clearTimeout(debounceTimer);
         setBusy(false);
-        out.innerHTML = "";
-        summary.textContent = "${L.typeToSearch}";
+        out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
+        summary.textContent = "";
+        titleMeta.textContent = "";
         return;
       }
       const launch = () => {
         refreshScopeInfo();
+        viewMode = "search";
         activeRequestId = ++requestId;
         paused = false;
+        collapsedFiles.clear();
         setBusy(true, "${L.searching}");
         vscode.postMessage({
           type: "search",
@@ -538,11 +1005,13 @@ function getHtml(initialQuery, initialOptions) {
         paused = false;
         updateControlButtons();
         summary.textContent = "${L.searching}";
+        titleMeta.textContent = "${L.searching}";
         vscode.postMessage({ type: "resumeSearch" });
       } else {
         paused = true;
         updateControlButtons();
         summary.textContent = "${L.paused}";
+        titleMeta.textContent = "${L.paused}";
         vscode.postMessage({ type: "pauseSearch" });
       }
     });
@@ -550,14 +1019,28 @@ function getHtml(initialQuery, initialOptions) {
       if (!searching) return;
       vscode.postMessage({ type: "stopSearch" });
     });
+    btnExpand.addEventListener("click", () => {
+      collapsedFiles.clear();
+      for (const el of out.querySelectorAll(".file")) el.classList.remove("collapsed");
+    });
+    btnCollapse.addEventListener("click", () => {
+      for (const el of out.querySelectorAll(".file")) {
+        const key = el.dataset.file || "";
+        if (key) collapsedFiles.add(key);
+        el.classList.add("collapsed");
+      }
+    });
     q.addEventListener("keydown", (e) => { if (e.key === "Enter") run(true); });
-    q.addEventListener("input", () => run(false));
-    matchCase.addEventListener("change", () => run(true));
-    wholeWord.addEventListener("change", () => run(true));
-    useRegex.addEventListener("change", () => run(true));
-    fuzzy.addEventListener("change", () => run(true));
-    excludeGitIgnored.addEventListener("change", () => run(true));
-    excludeSearchIgnored.addEventListener("change", () => run(true));
+    q.addEventListener("input", () => {
+      if (!searchOnType) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        return;
+      }
+      run(false);
+    });
+    for (const el of [matchCase, wholeWord, useRegex, fuzzy, excludeGitIgnored, excludeSearchIgnored]) {
+      el.addEventListener("change", () => run(true));
+    }
     clearScopeBtn.addEventListener("click", () => {
       scopePath = "";
       refreshScopeInfo();
@@ -565,21 +1048,54 @@ function getHtml(initialQuery, initialOptions) {
     });
 
     document.getElementById("btnReplace").addEventListener("click", () => {
+      setReplaceOpen(!replaceOpen);
+      if (replaceOpen) replaceEl.focus();
+    });
+    btnReplacePreview.addEventListener("click", () => {
+      const find = q.value.trim();
+      if (!find) return;
+      setReplaceOpen(true);
+      setBusy(true, "${L.replaceSearching}");
       vscode.postMessage({
-        type: "openReplace",
-        find: q.value,
-        replace: "",
+        type: "previewReplace",
+        find,
+        replace: replaceEl.value,
         ...searchOptionsPayload()
       });
+    });
+    btnReplaceAll.addEventListener("click", () => {
+      const find = q.value.trim();
+      if (!find) return;
+      setReplaceOpen(true);
+      vscode.postMessage({
+        type: "replaceAll",
+        find,
+        replace: replaceEl.value,
+        ...searchOptionsPayload()
+      });
+    });
+    replaceEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") btnReplacePreview.click();
     });
 
     window.addEventListener("message", (event) => {
       const msg = event.data;
       if (!msg || !msg.type) return;
 
+      if (msg.type === "config") {
+        searchOnType = msg.searchOnType !== false;
+        refreshQueryPlaceholder();
+        if (!q.value.trim()) {
+          out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
+        }
+        return;
+      }
+
       if (msg.type === "hydrate") {
         const opts = msg.options || {};
         q.value = String(msg.query || "");
+        replaceEl.value = String(msg.replace || "");
+        setReplaceOpen(!!msg.showReplace);
         matchCase.checked = !!opts.matchCase;
         wholeWord.checked = !!opts.wholeWord;
         useRegex.checked = !!opts.useRegex;
@@ -590,10 +1106,48 @@ function getHtml(initialQuery, initialOptions) {
         refreshScopeInfo();
         if (q.value.trim()) run(true);
         else {
-          out.innerHTML = "";
-          summary.textContent = "${L.typeToSearch}";
+          out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
+          summary.textContent = "";
+          titleMeta.textContent = "";
           setBusy(false);
         }
+        if (replaceOpen) replaceEl.focus();
+        return;
+      }
+
+      if (msg.type === "replacePreviewStarted") {
+        setBusy(true, "${L.replaceSearching}");
+        return;
+      }
+      if (msg.type === "replacePreviewResult") {
+        setBusy(false);
+        if (!msg.ok) {
+          summary.textContent = msg.message || "Error";
+          titleMeta.textContent = "";
+          out.innerHTML = '<div class="empty">' + esc(msg.message || "Error") + "</div>";
+          return;
+        }
+        viewMode = "replacePreview";
+        summary.textContent = msg.files + " ${L.filesWord}, " + msg.occurrences + " ${L.occurrences}";
+        titleMeta.textContent = msg.occurrences ? (msg.occurrences + " ${L.occurrences}") : "${L.noResults}";
+        renderReplaceSamples(msg.samples || []);
+        return;
+      }
+      if (msg.type === "replaceResult") {
+        setBusy(false);
+        if (msg.cancelled) {
+          summary.textContent = ${pl ? '"Anulowano."' : '"Cancelled."'};
+          return;
+        }
+        if (!msg.ok) {
+          summary.textContent = msg.message || "Error";
+          return;
+        }
+        summary.textContent = ${pl
+          ? '"Zamieniono: " + msg.occurrences + " w " + msg.changedFiles + " plikach."'
+          : '"Replaced " + msg.occurrences + " in " + msg.changedFiles + " file(s)."'};
+        titleMeta.textContent = "";
+        if (msg.occurrences) run(true);
         return;
       }
 
@@ -601,6 +1155,7 @@ function getHtml(initialQuery, initialOptions) {
 
       if (msg.type === "searchStarted") {
         paused = false;
+        viewMode = "search";
         setBusy(true, "${L.searching}");
         out.innerHTML = "";
         return;
@@ -608,106 +1163,168 @@ function getHtml(initialQuery, initialOptions) {
       if (msg.type === "searchError") {
         setBusy(false);
         summary.textContent = msg.message || "Error";
+        titleMeta.textContent = "";
         return;
       }
       if (msg.type === "resultsPartial") {
+        if (viewMode !== "search") return;
         const items = Array.isArray(msg.items) ? msg.items : [];
+        lastSearchItems = items;
+        lastSearchTab = msg.tab || activeTab;
         if (!paused) setBusy(true, "${L.searching}");
         requestAnimationFrame(() => {
-          if (Number(msg.requestId) !== activeRequestId) return;
+          if (Number(msg.requestId) !== activeRequestId || viewMode !== "search") return;
           render(items, msg.tab || activeTab, { partial: true, stopped: false });
         });
         return;
       }
       if (msg.type !== "results") return;
+      if (viewMode !== "search") return;
       const items = Array.isArray(msg.items) ? msg.items : [];
+      lastSearchItems = items;
+      lastSearchTab = msg.tab || activeTab;
       const stopped = !!msg.stopped;
       setBusy(false);
       requestAnimationFrame(() => {
         if (msg.requestId && Number(msg.requestId) !== activeRequestId) return;
+        if (viewMode !== "search") return;
         render(items, msg.tab || activeTab, { partial: false, stopped });
       });
     });
 
-    function render(items, tab, opts) {
-      const partial = !!(opts && opts.partial);
-      const stopped = !!(opts && opts.stopped);
-      out.innerHTML = "";
-      const tabNames = {
-        files: "${L.files}",
-        folders: "${L.folders}",
-        text: "${L.text}",
-        symbols: "${L.symbols}",
-        commands: "${L.commands}",
-        everything: "Everything"
-      };
-      const tabName = tabNames[tab] || tab;
-      const scopePart = scopePath ? " | ${L.scope}: " + scopePath : "";
-      if (partial) {
-        summary.textContent = paused
-          ? (tabName + ": ${L.foundSoFar} " + items.length + " — ${L.paused}" + scopePart)
-          : (tabName + ": ${L.foundSoFar} " + items.length + "…" + scopePart);
-      } else if (stopped) {
-        summary.textContent = tabName + ": " + items.length + " ${L.results} (${L.stopped})" + scopePart;
-      } else {
-        summary.textContent = tabName + ": " + items.length + " ${L.results}" + scopePart;
-      }
-      if (!items.length) {
-        if (!partial) out.textContent = "${L.noResults}";
-        return;
-      }
-      if (tab === "text") {
-        const grouped = new Map();
-        for (const it of items) {
-          if (!it.filePath) continue;
-          const p = String(it.filePath).replaceAll("\\\\","/");
-          const i = p.lastIndexOf("/");
-          const folder = i >= 0 ? p.slice(0, i) : ".";
-          if (!grouped.has(folder)) grouped.set(folder, []);
-          grouped.get(folder).push(it);
-        }
-        const folders = [...grouped.keys()].sort((a,b)=>a.localeCompare(b));
-        for (const folder of folders) {
-          const h = document.createElement("div");
-          h.className = "folder";
-          h.textContent = folder;
-          out.appendChild(h);
-          for (const it of grouped.get(folder)) out.appendChild(rowFor(it));
-        }
-        applySelectionToRows();
-        return;
-      }
-
-      const h = document.createElement("div");
-      h.className = "folder";
-      h.textContent = tab[0].toUpperCase() + tab.slice(1) + " (" + items.length + ")";
-      out.appendChild(h);
-      for (const it of items) {
-        out.appendChild(rowFor(it));
-      }
-      applySelectionToRows();
+    function stripIcon(label) {
+      return String(label || "").replace(/^\\$\\([^)]+\\)\\s*/, "");
     }
 
-    function rowFor(it) {
-      const row = document.createElement("div");
-      row.className = "row";
-      row.dataset.key = itemKey(it);
-      const left = it.label || it.description || it.filePath || "";
-      const right = it.description || it.filePath || "";
-      row.innerHTML = '<div>' + esc(left) + '</div><div class="meta">' + esc(right) + '</div><div class="detail">' + esc(it.detail || "") + '</div>';
-      row.addEventListener("click", () => {
-        rememberSelection(it);
-        for (const r of out.querySelectorAll(".row")) r.classList.remove("selected");
-        row.classList.add("selected");
-        vscode.postMessage({
-          type: "open",
-          filePath: it.filePath,
-          lineNumber: it.lineNumber,
-          column: it.column,
-          commandId: it.commandId
+    function splitPath(fp) {
+      const p = String(fp || "").replaceAll("\\\\", "/");
+      const i = p.lastIndexOf("/");
+      if (i < 0) return { name: p || "?", dir: "" };
+      return { name: p.slice(i + 1), dir: p.slice(0, i) };
+    }
+
+    function highlightLine(detail, query, column) {
+      const line = String(detail || "");
+      const needle = String(query || "");
+      if (!line) return "";
+      if (!needle) return esc(line);
+      let start = Math.max(0, Number(column || 1) - 1);
+      let len = needle.length;
+      if (useRegex.checked) {
+        try {
+          const flags = matchCase.checked ? "g" : "gi";
+          const re = new RegExp(needle, flags);
+          const m = re.exec(line);
+          if (m) {
+            start = m.index;
+            len = m[0].length;
+          }
+        } catch (_) {
+          // keep column-based slice
+        }
+      } else if (start >= line.length || line.substr(start, len).toLowerCase() !== needle.toLowerCase()) {
+        const hay = matchCase.checked ? line : line.toLowerCase();
+        const n = matchCase.checked ? needle : needle.toLowerCase();
+        const at = hay.indexOf(n);
+        if (at >= 0) start = at;
+      }
+      len = Math.max(1, Math.min(len, line.length - start));
+      const before = esc(line.slice(0, start));
+      const mid = esc(line.slice(start, start + len));
+      const after = esc(line.slice(start + len));
+      return before + "<mark>" + mid + "</mark>" + after;
+    }
+
+    function highlightSpan(line, column, matchLength) {
+      const src = String(line || "");
+      const start = Math.max(0, Number(column || 1) - 1);
+      const len = Math.max(1, Number(matchLength) || 1);
+      const end = Math.min(src.length, start + len);
+      return esc(src.slice(0, start)) + "<mark>" + esc(src.slice(start, end)) + "</mark>" + esc(src.slice(end));
+    }
+
+    function renderReplaceSamples(samples) {
+      out.innerHTML = "";
+      if (!samples || !samples.length) {
+        out.innerHTML = '<div class="empty">${L.noResults}</div>';
+        return;
+      }
+      for (const file of samples) {
+        const fp = String(file.filePath || "").replaceAll("\\\\", "/");
+        const { name, dir } = splitPath(fp);
+        const root = document.createElement("div");
+        root.className = "file";
+        root.dataset.file = fp;
+        if (collapsedFiles.has(fp)) root.classList.add("collapsed");
+
+        const head = document.createElement("div");
+        head.className = "file-head";
+        const count = Number(file.count || (file.previews || []).length || 0);
+        const countLabel = count === 1 ? "${L.match}" : "${L.matches}";
+        head.innerHTML =
+          '<span class="chev">▸</span>' +
+          '<div class="file-name">' + esc(name) +
+            (dir ? '<span class="file-path">' + esc(dir) + '</span>' : '') +
+          '</div>' +
+          '<span class="badge" title="' + count + ' ' + countLabel + '">' + count + '</span>';
+        head.addEventListener("click", () => {
+          const next = !root.classList.contains("collapsed");
+          root.classList.toggle("collapsed", next);
+          if (next) collapsedFiles.add(fp);
+          else collapsedFiles.delete(fp);
         });
+
+        const body = document.createElement("div");
+        body.className = "file-body";
+        for (const p of file.previews || []) {
+          const row = document.createElement("div");
+          row.className = "match replace-match";
+          const beforeLen = Number(p.matchLength || 0);
+          const afterLen = Math.max(
+            1,
+            String(p.after || "").length - (String(p.before || "").length - beforeLen)
+          );
+          row.innerHTML =
+            '<div class="ln">' + esc(String(p.lineNumber || "")) + '</div>' +
+            '<div class="code-stack">' +
+              '<div class="code">' + highlightSpan(p.before, p.column, beforeLen) + '</div>' +
+              '<div class="code after">' + highlightSpan(p.after, p.column, afterLen) + '</div>' +
+            '</div>';
+          row.addEventListener("click", () => {
+            for (const r of out.querySelectorAll(".match, .row")) r.classList.remove("selected");
+            row.classList.add("selected");
+            vscode.postMessage({
+              type: "open",
+              filePath: fp,
+              lineNumber: p.lineNumber,
+              column: p.column
+            });
+          });
+          body.appendChild(row);
+        }
+
+        root.appendChild(head);
+        root.appendChild(body);
+        out.appendChild(root);
+      }
+    }
+
+    function openItem(it) {
+      rememberSelection(it);
+      for (const r of out.querySelectorAll(".match, .row")) r.classList.remove("selected");
+      const el = out.querySelector('[data-key="' + CSS.escape(itemKey(it)) + '"]');
+      if (el) el.classList.add("selected");
+      vscode.postMessage({
+        type: "open",
+        filePath: it.filePath,
+        lineNumber: it.lineNumber,
+        column: it.column,
+        commandId: it.commandId
       });
-      row.addEventListener("contextmenu", (e) => {
+    }
+
+    function bindContext(el, it) {
+      el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         if (!it.filePath) return;
         ctxItem = it;
@@ -715,7 +1332,127 @@ function getHtml(initialQuery, initialOptions) {
         ctx.style.top = e.clientY + "px";
         ctx.style.display = "block";
       });
+    }
+
+    function matchRow(it) {
+      const row = document.createElement("div");
+      row.className = "match";
+      row.dataset.key = itemKey(it);
+      row.innerHTML =
+        '<div class="ln">' + esc(String(it.lineNumber || "")) + '</div>' +
+        '<div class="code">' + highlightLine(it.detail, q.value.trim(), it.column) + '</div>';
+      row.addEventListener("click", () => openItem(it));
+      bindContext(row, it);
       return row;
+    }
+
+    function fileGroup(filePath, matches) {
+      const { name, dir } = splitPath(filePath);
+      const root = document.createElement("div");
+      root.className = "file";
+      root.dataset.file = filePath;
+      if (collapsedFiles.has(filePath)) root.classList.add("collapsed");
+
+      const head = document.createElement("div");
+      head.className = "file-head";
+      const count = matches.length;
+      const countLabel = count === 1 ? "${L.match}" : "${L.matches}";
+      head.innerHTML =
+        '<span class="chev">▸</span>' +
+        '<div class="file-name">' + esc(name) +
+          (dir ? '<span class="file-path">' + esc(dir) + '</span>' : '') +
+        '</div>' +
+        '<span class="badge" title="' + count + ' ' + countLabel + '">' + count + '</span>';
+      head.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const next = !root.classList.contains("collapsed");
+        root.classList.toggle("collapsed", next);
+        if (next) collapsedFiles.add(filePath);
+        else collapsedFiles.delete(filePath);
+      });
+      head.addEventListener("dblclick", () => {
+        if (matches[0]) openItem(matches[0]);
+      });
+      bindContext(head, matches[0] || { filePath });
+
+      const body = document.createElement("div");
+      body.className = "file-body";
+      for (const it of matches) body.appendChild(matchRow(it));
+
+      root.appendChild(head);
+      root.appendChild(body);
+      return root;
+    }
+
+    function listRow(it) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.dataset.key = itemKey(it);
+      const primary = stripIcon(it.label) || it.filePath || it.description || "";
+      const secondary = it.description || it.filePath || it.detail || "";
+      row.innerHTML =
+        '<div class="primary">' + esc(primary) + '</div>' +
+        (secondary && secondary !== primary ? '<div class="secondary">' + esc(secondary) + '</div>' : '');
+      row.addEventListener("click", () => openItem(it));
+      bindContext(row, it);
+      return row;
+    }
+
+    function setStatus(items, tab, opts) {
+      const partial = !!(opts && opts.partial);
+      const stopped = !!(opts && opts.stopped);
+      const tabNames = {
+        files: "${L.files}",
+        folders: "${L.folders}",
+        text: "${L.text}",
+        symbols: "${L.symbols}",
+        commands: "${L.commands}"
+      };
+      const tabName = tabNames[tab] || tab;
+      const scopePart = scopePath ? " · ${L.scope}: " + scopePath : "";
+      let text;
+      if (partial) {
+        text = paused
+          ? (tabName + ": ${L.foundSoFar} " + items.length + " — ${L.paused}" + scopePart)
+          : (tabName + ": ${L.foundSoFar} " + items.length + "…" + scopePart);
+      } else if (stopped) {
+        text = tabName + ": " + items.length + " ${L.results} (${L.stopped})" + scopePart;
+      } else {
+        text = tabName + ": " + items.length + " ${L.results}" + scopePart;
+      }
+      summary.textContent = text;
+      if (!searching) titleMeta.textContent = items.length ? (items.length + " ${L.results}") : "";
+    }
+
+    function render(items, tab, opts) {
+      const partial = !!(opts && opts.partial);
+      out.innerHTML = "";
+      setStatus(items, tab, opts);
+      if (!items.length) {
+        if (!partial) out.innerHTML = '<div class="empty">${L.noResults}</div>';
+        return;
+      }
+
+      if (tab === "text") {
+        const byFile = new Map();
+        for (const it of items) {
+          if (!it.filePath) continue;
+          const fp = String(it.filePath).replaceAll("\\\\", "/");
+          if (!byFile.has(fp)) byFile.set(fp, []);
+          byFile.get(fp).push(it);
+        }
+        const files = [...byFile.keys()].sort((a, b) => a.localeCompare(b));
+        for (const fp of files) out.appendChild(fileGroup(fp, byFile.get(fp)));
+        applySelectionToRows();
+        return;
+      }
+
+      const label = document.createElement("div");
+      label.className = "section-label";
+      label.textContent = tab;
+      out.appendChild(label);
+      for (const it of items) out.appendChild(listRow(it));
+      applySelectionToRows();
     }
 
     tabsWrap.addEventListener("click", (e) => {
@@ -736,7 +1473,7 @@ function getHtml(initialQuery, initialOptions) {
 
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape") ctx.style.display = "none";
-      if (e.key === "Tab") {
+      if (e.key === "Tab" && !e.altKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         const idx = tabOrder.indexOf(activeTab);
         const next = e.shiftKey ? (idx - 1 + tabOrder.length) % tabOrder.length : (idx + 1) % tabOrder.length;
@@ -747,18 +1484,23 @@ function getHtml(initialQuery, initialOptions) {
       }
       if (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
         const k = String(e.key || "").toLowerCase();
-        if (k === "c") { matchCase.checked = !matchCase.checked; run(true); }
-        if (k === "w") { wholeWord.checked = !wholeWord.checked; run(true); }
-        if (k === "r") { useRegex.checked = !useRegex.checked; run(true); }
-        if (k === "f") { fuzzy.checked = !fuzzy.checked; run(true); }
-        if (k === "g") { excludeGitIgnored.checked = !excludeGitIgnored.checked; run(true); }
-        if (k === "s") { excludeSearchIgnored.checked = !excludeSearchIgnored.checked; run(true); }
+        const map = { c: matchCase, w: wholeWord, r: useRegex, f: fuzzy, g: excludeGitIgnored, s: excludeSearchIgnored };
+        if (map[k]) { map[k].checked = !map[k].checked; run(true); }
       }
     });
 
-    function esc(s){ return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"); }
+    function esc(s){
+      return String(s)
+        .replaceAll("&","&amp;")
+        .replaceAll("<","&lt;")
+        .replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;");
+    }
     refreshScopeInfo();
-    summary.textContent = "${L.typeToSearch}";
+    refreshQueryPlaceholder();
+    out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
+    summary.textContent = "";
+    if (replaceOpen) replaceEl.focus();
     if (q.value.trim()) run(true);
   </script>
 </body>
@@ -769,5 +1511,14 @@ function escapeHtml(text) {
   return String(text).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-module.exports = { openFullscreenSearch };
+module.exports = {
+  openFullscreenSearch,
+  pushFullscreenConfig() {
+    if (!fullscreenPanel) return;
+    fullscreenPanel.webview.postMessage({
+      type: "config",
+      searchOnType: getConfig().searchOnType !== false
+    });
+  }
+};
 

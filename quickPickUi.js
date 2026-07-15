@@ -150,6 +150,17 @@ function openQuickSearch() {
   lastUpdateFn = updateItems;
 
   quickPick.onDidChangeValue((value) => {
+    if (!getConfig().searchOnType) {
+      quickPick.items = [
+        {
+          label: t("Press Enter to search…", "Nacisnij Enter, aby szukac…"),
+          alwaysShow: true,
+          _sfPendingSearch: true
+        }
+      ];
+      quickPick.activeItems = quickPick.items;
+      return;
+    }
     updateItems(value).catch((error) => {
       quickPick.busy = false;
       quickPick.items = [];
@@ -159,7 +170,18 @@ function openQuickSearch() {
 
   quickPick.onDidAccept(async () => {
     const item = quickPick.selectedItems[0];
-    if (!item) return;
+    if (!item || item._sfPendingSearch) {
+      try {
+        await updateItems(quickPick.value);
+      } catch (error) {
+        quickPick.busy = false;
+        quickPick.items = [];
+        vscode.window.showErrorMessage(
+          error instanceof Error ? error.message : t("Search failed", "Wyszukiwanie nie powiodlo sie")
+        );
+      }
+      return;
+    }
     if (item.commandId) {
       await vscode.commands.executeCommand(String(item.commandId));
     } else if (item.filePath) {

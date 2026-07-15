@@ -23,7 +23,7 @@
     "ripgrep",
     "findstr",
     "quickpick",
-    "solution explorer"
+    "tasks"
   ],
   "engines": {
     "vscode": "^1.90.0"
@@ -36,8 +36,9 @@
     "onCommand:swiftFind.openReplace",
     "onCommand:swiftFind.open",
     "onCommand:swiftFind.showWelcome",
+    "onCommand:swiftFind.explorer.searchHere",
+    "onCommand:swiftFind.explorer.replaceHere",
     "onView:swiftFind.sidebar",
-    "onView:swiftFind.solutionExplorer",
     "onView:swiftFind.tasksExplorer"
   ],
   "main": "./extension.js",
@@ -97,32 +98,12 @@
         "title": "%cmd.focusSidebar%"
       },
       {
-        "command": "swiftFind.focusSolutionExplorer",
-        "title": "%cmd.focusSolution%"
+        "command": "swiftFind.explorer.searchHere",
+        "title": "%cmd.explorer.searchHere%"
       },
       {
-        "command": "swiftFind.solutionExplorer.refresh",
-        "title": "%cmd.solution.refresh%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.openNode",
-        "title": "%cmd.solution.open%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.searchHere",
-        "title": "%cmd.solution.searchHere%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.replaceHere",
-        "title": "%cmd.solution.replaceHere%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.revealInOS",
-        "title": "%cmd.solution.reveal%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.copyPath",
-        "title": "%cmd.solution.copyPath%"
+        "command": "swiftFind.explorer.replaceHere",
+        "title": "%cmd.explorer.replaceHere%"
       },
       {
         "command": "swiftFind.tasks.refresh",
@@ -221,27 +202,30 @@
     "views": {
       "swiftFind": [
         {
-          "id": "swiftFind.solutionExplorer",
-          "name": "%views.solution.name%"
+          "id": "swiftFind.sidebar",
+          "name": "%views.sidebar.name%",
+          "type": "webview"
         },
         {
           "id": "swiftFind.tasksExplorer",
           "name": "%views.tasks.name%"
-        },
-        {
-          "id": "swiftFind.sidebar",
-          "name": "%views.sidebar.name%",
-          "type": "webview"
         }
       ]
     },
     "menus": {
-      "view/title": [
+      "explorer/context": [
         {
-          "command": "swiftFind.solutionExplorer.refresh",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation"
+          "command": "swiftFind.explorer.searchHere",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "swiftfind@1"
         },
+        {
+          "command": "swiftFind.explorer.replaceHere",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "swiftfind@2"
+        }
+      ],
+      "view/title": [
         {
           "command": "swiftFind.tasks.refresh",
           "when": "view == swiftFind.tasksExplorer",
@@ -249,31 +233,6 @@
         }
       ],
       "view/item/context": [
-        {
-          "command": "swiftFind.solutionExplorer.openNode",
-          "when": "view == swiftFind.solutionExplorer && viewItem == swiftFind.fileNode",
-          "group": "inline"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.searchHere",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@1"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.replaceHere",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@2"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.revealInOS",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@3"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.copyPath",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@4"
-        },
         {
           "command": "swiftFind.tasks.openTask",
           "when": "view == swiftFind.tasksExplorer && viewItem == swiftFind.taskNode",
@@ -315,6 +274,11 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.preview%"
+        },
+        "swiftFind.searchOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.searchOnType%"
         },
         "swiftFind.excludeGlobs": {
           "type": "array",

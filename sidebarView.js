@@ -1,6 +1,6 @@
 const vscode = require("vscode");
 const path = require("path");
-const { searchByTab, openResult } = require("./searchEngine");
+const { searchByTab, openResult, getConfig } = require("./searchEngine");
 const { isPolish } = require("./i18n");
 const { itemKey, setLastSelection, getLastSelection } = require("./uiSelectionState");
 
@@ -28,6 +28,14 @@ class SwiftFindSidebarProvider {
       options: sel.options,
       key: itemKey(sel.item),
       item: sel.item
+    });
+  }
+
+  pushConfig() {
+    if (!this._view) return;
+    this._view.webview.postMessage({
+      type: "config",
+      searchOnType: getConfig().searchOnType !== false
     });
   }
 
@@ -140,6 +148,7 @@ class SwiftFindSidebarProvider {
 
   getHtml() {
     const pl = isPolish();
+    const searchOnType = getConfig().searchOnType !== false;
     const L = {
       files: pl ? "Pliki" : "Files",
       folders: pl ? "Foldery" : "Folders",
@@ -147,6 +156,7 @@ class SwiftFindSidebarProvider {
       symbols: pl ? "Symbole" : "Symbols",
       commands: pl ? "Polecenia" : "Commands",
       query: pl ? "Fraza wyszukiwania..." : "Search query...",
+      queryEnter: pl ? "Wpisz i nacisnij Enter..." : "Type and press Enter...",
       openFloating: pl ? "Otworz wyszukiwanie plywajace" : "Open Floating Search",
       openFullscreen: pl ? "Otworz pelnoekranowe wyniki" : "Open Fullscreen Results",
       matchCase: pl ? "Uwzgledniaj wielkosc liter" : "Match Case",
@@ -156,9 +166,12 @@ class SwiftFindSidebarProvider {
       exclGit: pl ? "Pomin Git Ignored" : "Exclude Git Ignored",
       exclSearch: pl ? "Pomin .searchignore" : "Exclude Search Ignored",
       helper: pl ? "Wpisz fraze, aby wyszukac wyniki w panelu bocznym." : "Type query to search sidebar results.",
+      helperEnter: pl ? "Wpisz fraze i nacisnij Enter." : "Type a query, then press Enter.",
       searching: pl ? "Wyszukiwanie..." : "Searching...",
       results: pl ? "wynikow" : "results"
     };
+    const helperText = searchOnType ? L.helper : L.helperEnter;
+    const queryPh = searchOnType ? L.query : L.queryEnter;
     return `<!doctype html>
 <html>
 <head>
@@ -327,7 +340,7 @@ class SwiftFindSidebarProvider {
       <button class="tab" data-tab="symbols">${L.symbols}</button>
       <button class="tab" data-tab="commands">${L.commands}</button>
     </div>
-    <input id="q" placeholder="${L.query}" />
+    <input id="q" placeholder="${queryPh}" />
     <div class="actions">
       <button id="quick">${L.openFloating}</button>
       <button id="full">${L.openFullscreen}</button>
@@ -340,7 +353,7 @@ class SwiftFindSidebarProvider {
       <label><input id="excludeGitIgnored" type="checkbox" checked /> ${L.exclGit}</label>
       <label><input id="excludeSearchIgnored" type="checkbox" checked /> ${L.exclSearch}</label>
     </div>
-    <div class="muted" id="meta">${L.helper}</div>
+    <div class="muted" id="meta">${helperText}</div>
     <div id="results" class="results"></div>
   </div>
   <div id="ctx" class="ctx"><button id="ctxReveal">${pl ? "Pokaż w Eksploratorze Windows" : "Show in Windows Explorer"}</button></div>
@@ -443,7 +456,7 @@ class SwiftFindSidebarProvider {
       const v = q.value.trim();
       if (!v) {
         resultsEl.innerHTML = "";
-        meta.textContent = "${L.helper}";
+        meta.textContent = searchOnType ? "${L.helper}" : "${L.helperEnter}";
         return;
       }
       meta.textContent = "${L.searching}";
@@ -451,8 +464,20 @@ class SwiftFindSidebarProvider {
     }
 
     function scheduleSearch() {
+      if (!searchOnType) {
+        if (timer) clearTimeout(timer);
+        return;
+      }
       if (timer) clearTimeout(timer);
       timer = setTimeout(searchNow, 140);
+    }
+
+    let searchOnType = ${searchOnType ? "true" : "false"};
+
+    function applySearchOnType(on) {
+      searchOnType = !!on;
+      q.placeholder = searchOnType ? "${L.query}" : "${L.queryEnter}";
+      if (!q.value.trim()) meta.textContent = searchOnType ? "${L.helper}" : "${L.helperEnter}";
     }
 
     function row(item) {
@@ -500,6 +525,10 @@ class SwiftFindSidebarProvider {
 
     window.addEventListener("message", (e) => {
       const msg = e.data || {};
+      if (msg.type === "config") {
+        applySearchOnType(msg.searchOnType !== false);
+        return;
+      }
       if (msg.type === "syncSelection") {
         syncFromHost(msg);
         return;
