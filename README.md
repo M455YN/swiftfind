@@ -2,8 +2,16 @@
 
 A fast, unified search for VS Code inspired by JetBrains IDEs.
 
-Default shortcut is `Ctrl+Shift+Space` (you can rebind it in Keyboard Shortcuts).  
-Open from status bar with `Search+` as well.
+Default shortcuts:
+- Floating search: `Ctrl+Alt+Shift+Space`
+- Fullscreen results: `Ctrl+Alt+Shift+F`
+- Find and replace: `Ctrl+Alt+Shift+H`
+
+Polish / AltGr-safe fallback (chord):
+- `Ctrl+Shift+J`, then `Space` / `F` / `H`
+
+You can rebind everything in Keyboard Shortcuts.  
+Open from status bar with `SwiftFind` as well.
 
 ## Tabs
 

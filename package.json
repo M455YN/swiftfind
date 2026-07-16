@@ -2,7 +2,7 @@
   "name": "swift-find",
   "displayName": "SwiftFind",
   "description": "Fast unified search for VS Code with tabs and rich filters.",
-  "version": "0.1.6",
+  "version": "1.0.0",
   "publisher": "M455YN",
   "author": {
     "name": "Mateusz Afelt"
@@ -23,7 +23,7 @@
     "ripgrep",
     "findstr",
     "quickpick",
-    "solution explorer"
+    "tasks"
   ],
   "engines": {
     "vscode": "^1.90.0"
@@ -34,10 +34,13 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:swiftFind.openReplace",
+    "onCommand:swiftFind.replaceInEditor",
     "onCommand:swiftFind.open",
-    "onView:swiftFind.sidebar",
-    "onView:swiftFind.solutionExplorer",
-    "onView:swiftFind.tasksExplorer"
+    "onCommand:swiftFind.showWelcome",
+    "onCommand:swiftFind.explorer.searchHere",
+    "onCommand:swiftFind.explorer.replaceHere",
+    "onView:swiftFind.tasksExplorer",
+    "onView:swiftFind.sidebarActions"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -45,15 +48,27 @@
       {
         "command": "swiftFind.open",
         "title": "%cmd.open%",
-        "shortTitle": "%cmd.open.short%"
+        "shortTitle": "%cmd.open.short%",
+        "icon": "$(search)"
       },
       {
         "command": "swiftFind.openFullscreen",
-        "title": "%cmd.openFullscreen%"
+        "title": "%cmd.openFullscreen%",
+        "icon": "$(window)"
       },
       {
         "command": "swiftFind.openReplace",
-        "title": "%cmd.openReplace%"
+        "title": "%cmd.openReplace%",
+        "icon": "$(replace-all)"
+      },
+      {
+        "command": "swiftFind.replaceInEditor",
+        "title": "%cmd.replaceInEditor%",
+        "icon": "$(replace)"
+      },
+      {
+        "command": "swiftFind.showWelcome",
+        "title": "%cmd.showWelcome%"
       },
       {
         "command": "swiftFind.toggleCaseSensitive",
@@ -88,40 +103,21 @@
         "title": "%cmd.prevTab%"
       },
       {
-        "command": "swiftFind.focusSidebar",
-        "title": "%cmd.focusSidebar%"
+        "command": "swiftFind.focusTasks",
+        "title": "%cmd.focusTasks%"
       },
       {
-        "command": "swiftFind.focusSolutionExplorer",
-        "title": "%cmd.focusSolution%"
+        "command": "swiftFind.explorer.searchHere",
+        "title": "%cmd.explorer.searchHere%"
       },
       {
-        "command": "swiftFind.solutionExplorer.refresh",
-        "title": "%cmd.solution.refresh%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.openNode",
-        "title": "%cmd.solution.open%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.searchHere",
-        "title": "%cmd.solution.searchHere%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.replaceHere",
-        "title": "%cmd.solution.replaceHere%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.revealInOS",
-        "title": "%cmd.solution.reveal%"
-      },
-      {
-        "command": "swiftFind.solutionExplorer.copyPath",
-        "title": "%cmd.solution.copyPath%"
+        "command": "swiftFind.explorer.replaceHere",
+        "title": "%cmd.explorer.replaceHere%"
       },
       {
         "command": "swiftFind.tasks.refresh",
-        "title": "%cmd.tasks.refresh%"
+        "title": "%cmd.tasks.refresh%",
+        "icon": "$(refresh)"
       },
       {
         "command": "swiftFind.tasks.openTask",
@@ -135,13 +131,45 @@
     "keybindings": [
       {
         "command": "swiftFind.open",
-        "key": "ctrl+shift+space",
-        "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
+        "key": "ctrl+alt+shift+space",
+        "mac": "cmd+alt+shift+space"
+      },
+      {
+        "command": "swiftFind.openFullscreen",
+        "key": "ctrl+alt+shift+f",
+        "mac": "cmd+alt+shift+f"
       },
       {
         "command": "swiftFind.openReplace",
-        "key": "ctrl+shift+h",
-        "when": "editorTextFocus || explorerViewletVisible || inputFocus || terminalFocus"
+        "key": "ctrl+alt+shift+h",
+        "mac": "cmd+alt+shift+h"
+      },
+      {
+        "command": "swiftFind.replaceInEditor",
+        "key": "ctrl+alt+shift+r",
+        "mac": "cmd+alt+shift+r",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "swiftFind.open",
+        "key": "ctrl+shift+j space",
+        "mac": "cmd+shift+j space"
+      },
+      {
+        "command": "swiftFind.openFullscreen",
+        "key": "ctrl+shift+j f",
+        "mac": "cmd+shift+j f"
+      },
+      {
+        "command": "swiftFind.openReplace",
+        "key": "ctrl+shift+j h",
+        "mac": "cmd+shift+j h"
+      },
+      {
+        "command": "swiftFind.replaceInEditor",
+        "key": "ctrl+shift+j r",
+        "mac": "cmd+shift+j r",
+        "when": "editorTextFocus"
       },
       {
         "command": "swiftFind.nextTab",
@@ -196,59 +224,45 @@
     "views": {
       "swiftFind": [
         {
-          "id": "swiftFind.solutionExplorer",
-          "name": "%views.solution.name%"
+          "type": "webview",
+          "id": "swiftFind.sidebarActions",
+          "name": "%views.actions.name%",
+          "visibility": "visible"
         },
         {
           "id": "swiftFind.tasksExplorer",
           "name": "%views.tasks.name%"
-        },
-        {
-          "id": "swiftFind.sidebar",
-          "name": "%views.sidebar.name%",
-          "type": "webview"
         }
       ]
     },
     "menus": {
-      "view/title": [
+      "editor/context": [
         {
-          "command": "swiftFind.solutionExplorer.refresh",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation"
+          "command": "swiftFind.replaceInEditor",
+          "when": "editorTextFocus",
+          "group": "1_modification@99"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "swiftFind.explorer.searchHere",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "swiftfind@1"
         },
+        {
+          "command": "swiftFind.explorer.replaceHere",
+          "when": "resourceScheme == file || resourceScheme == vscode-remote",
+          "group": "swiftfind@2"
+        }
+      ],
+      "view/title": [
         {
           "command": "swiftFind.tasks.refresh",
           "when": "view == swiftFind.tasksExplorer",
-          "group": "navigation"
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [
-        {
-          "command": "swiftFind.solutionExplorer.openNode",
-          "when": "view == swiftFind.solutionExplorer && viewItem == swiftFind.fileNode",
-          "group": "inline"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.searchHere",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@1"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.replaceHere",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@2"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.revealInOS",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@3"
-        },
-        {
-          "command": "swiftFind.solutionExplorer.copyPath",
-          "when": "view == swiftFind.solutionExplorer",
-          "group": "navigation@4"
-        },
         {
           "command": "swiftFind.tasks.openTask",
           "when": "view == swiftFind.tasksExplorer && viewItem == swiftFind.taskNode",
@@ -276,8 +290,9 @@
       "properties": {
         "swiftFind.maxResults": {
           "type": "number",
-          "default": 300,
-          "minimum": 10,
+          "default": 5000,
+          "minimum": 50,
+          "maximum": 100000,
           "description": "%cfg.maxResults%"
         },
         "swiftFind.caseInsensitive": {
@@ -289,6 +304,56 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.preview%"
+        },
+        "swiftFind.searchOnType": {
+          "type": "boolean",
+          "default": true,
+          "description": "%cfg.searchOnType%"
+        },
+        "swiftFind.excludeGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/{node_modules,.git,dist,build,out,.next,.cache,.venv,venv}/**",
+            "**/*.dtbcache",
+	    "**/*.dtbcache.v2",
+            "**/*.bin",
+            "**/*.exe",
+            "**/*.dll",
+            "**/*.pdb",
+            "**/*.obj",
+            "**/*.o",
+            "**/*.a",
+            "**/*.lib",
+            "**/*.so",
+            "**/*.dylib",
+            "**/*.class",
+            "**/*.jar",
+            "**/*.wasm",
+            "**/*.png",
+            "**/*.jpg",
+            "**/*.jpeg",
+            "**/*.gif",
+            "**/*.webp",
+            "**/*.ico",
+            "**/*.pdf",
+            "**/*.zip",
+            "**/*.7z",
+            "**/*.rar",
+            "**/*.gz",
+            "**/*.tar",
+            "**/*.woff",
+            "**/*.woff2",
+            "**/*.ttf",
+            "**/*.eot",
+            "**/*.mp3",
+            "**/*.mp4",
+            "**/*.wav",
+            "**/*.suo"
+          ],
+          "description": "%cfg.excludeGlobs%"
         }
       }
     }
