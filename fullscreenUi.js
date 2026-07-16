@@ -174,6 +174,46 @@ function wireFullscreenMessages(panel) {
       return;
     }
 
+    if (msg.type === "pickScopeFolder") {
+      const pl = isPolish();
+      const root = vscode.workspace.workspaceFolders?.[0];
+      if (!root) {
+        vscode.window.showWarningMessage(
+          pl ? "SwiftFind: najpierw otwórz folder roboczy." : "SwiftFind: open a workspace folder first."
+        );
+        return;
+      }
+      const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        defaultUri: root.uri,
+        openLabel: pl ? "Szukaj tutaj" : "Search here",
+        title: pl ? "Wybierz folder wyszukiwania" : "Choose search folder"
+      });
+      if (!uris?.length) return;
+      const pickedFs = uris[0].fsPath;
+      const rootFs = root.uri.fsPath;
+      if (path.resolve(pickedFs) === path.resolve(rootFs)) {
+        panel.webview.postMessage({ type: "setScope", scopePath: "" });
+        return;
+      }
+      const rel = path.relative(rootFs, pickedFs);
+      if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
+        vscode.window.showWarningMessage(
+          pl
+            ? "SwiftFind: folder musi być wewnątrz otwartego workspace."
+            : "SwiftFind: folder must be inside the open workspace."
+        );
+        return;
+      }
+      panel.webview.postMessage({
+        type: "setScope",
+        scopePath: rel.replaceAll("\\", "/")
+      });
+      return;
+    }
+
     if (msg.type === "previewReplace") {
       panel.webview.postMessage({ type: "replacePreviewStarted" });
       try {
@@ -315,6 +355,8 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     matches: pl ? "trafień" : "matches",
     match: pl ? "trafienie" : "match",
     scope: pl ? "Zakres" : "Directory",
+    pickScope: pl ? "Folder…" : "Folder…",
+    pickScopeTitle: pl ? "Wybierz folder wyszukiwania" : "Choose search folder",
     clearScope: pl ? "Wyczyść" : "Clear",
     findReplace: pl ? "Zamień" : "Replace",
     replaceWith: pl ? "Zamień na" : "Replace",
@@ -926,6 +968,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
         <button type="button" id="btnReplace" class="btn">${L.findReplace}</button>
         <button type="button" id="btnExpand" class="btn">${L.expandAll}</button>
         <button type="button" id="btnCollapse" class="btn">${L.collapseAll}</button>
+        <button type="button" id="btnPickScope" class="btn" title="${L.pickScopeTitle}">${L.pickScope}</button>
         <div class="scope" id="scopeWrap"><span id="scopeInfo"></span><button type="button" id="clearScope" class="linkish" hidden>${L.clearScope}</button></div>
       </div>
     </div>
@@ -962,6 +1005,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     const scopeInfo = document.getElementById("scopeInfo");
     const scopeWrap = document.getElementById("scopeWrap");
     const clearScopeBtn = document.getElementById("clearScope");
+    const btnPickScope = document.getElementById("btnPickScope");
     let scopePath = ${JSON.stringify(initialOptions.scopePath || "")};
     let activeTab = "text";
     const tabOrder = ["files","folders","text","symbols","commands"];
@@ -1121,6 +1165,11 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     btnStop.addEventListener("click", () => {
       if (!searching) return;
       vscode.postMessage({ type: "stopSearch" });
+      // Invalidate in-flight batches immediately so late partials cannot resurrect "searching".
+      activeRequestId = ++requestId;
+      paused = false;
+      setBusy(false);
+      render(lastSearchItems, lastSearchTab, { partial: false, stopped: true });
     });
     btnExpand.addEventListener("click", () => {
       collapsedFiles.clear();
@@ -1155,6 +1204,9 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       scopePath = "";
       refreshScopeInfo();
       if (q.value.trim()) run(true);
+    });
+    btnPickScope.addEventListener("click", () => {
+      vscode.postMessage({ type: "pickScopeFolder" });
     });
 
     document.getElementById("btnReplace").addEventListener("click", () => {
@@ -1201,6 +1253,13 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
         if (!q.value.trim()) {
           out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
         }
+        return;
+      }
+
+      if (msg.type === "setScope") {
+        scopePath = String(msg.scopePath || "");
+        refreshScopeInfo();
+        if (q.value.trim()) run(true);
         return;
       }
 

@@ -372,30 +372,81 @@ function runRipgrep(rootPath, query, options, listFiles) {
 
 /**
  * Pause / resume / cancel controller for streaming searches.
+ * Pause/cancel take effect immediately (stdout pause / child kill), not on the next batch tick.
  */
 function createSearchController() {
   let paused = false;
   let cancelled = false;
   /** @type {Array<() => void>} */
   let resumeWaiters = [];
+  /** @type {Array<() => void>} */
+  let interruptWaiters = [];
+  /** @type {import("child_process").ChildProcess | null} */
+  let child = null;
 
   const wake = () => {
     const list = resumeWaiters.splice(0, resumeWaiters.length);
     for (const resolve of list) resolve();
   };
 
+  const interrupt = () => {
+    const list = interruptWaiters.splice(0, interruptWaiters.length);
+    for (const resolve of list) resolve();
+  };
+
+  const applyPauseToChild = () => {
+    if (!child?.stdout) return;
+    try {
+      if (paused) child.stdout.pause();
+      else child.stdout.resume();
+    } catch {
+      // ignore
+    }
+  };
+
+  const killChild = () => {
+    if (!child) return;
+    const proc = child;
+    child = null;
+    try {
+      proc.kill();
+    } catch {
+      // ignore
+    }
+  };
+
   return {
+    /**
+     * @param {import("child_process").ChildProcess} proc
+     */
+    attachChild(proc) {
+      child = proc;
+      applyPauseToChild();
+      if (cancelled) {
+        killChild();
+        return;
+      }
+      proc.once("close", () => {
+        if (child === proc) child = null;
+      });
+    },
     pause() {
       paused = true;
+      applyPauseToChild();
+      interrupt();
     },
     resume() {
       if (!paused) return;
       paused = false;
+      applyPauseToChild();
+      interrupt();
       wake();
     },
     cancel() {
       cancelled = true;
       paused = false;
+      killChild();
+      interrupt();
       wake();
     },
     isPaused: () => paused,
@@ -404,6 +455,26 @@ function createSearchController() {
       while (paused && !cancelled) {
         await new Promise((resolve) => {
           resumeWaiters.push(resolve);
+        });
+      }
+    },
+    /** Interruptible delay — ends early on pause/resume/cancel. */
+    async delay(ms) {
+      const waitMs = Math.max(0, Number(ms) || 0);
+      if (!waitMs || cancelled) return;
+      const start = Date.now();
+      while (!cancelled && Date.now() - start < waitMs) {
+        if (paused) {
+          await this.waitIfPaused();
+          return;
+        }
+        const remaining = waitMs - (Date.now() - start);
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, remaining);
+          interruptWaiters.push(() => {
+            clearTimeout(t);
+            resolve();
+          });
         });
       }
     }
@@ -441,25 +512,16 @@ function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
+    if (controller) controller.attachChild(child);
 
     const waitIfPaused = async () => {
-      if (!controller) return;
-      if (controller.isPaused()) {
-        try {
-          child.stdout.pause();
-        } catch {
-          // ignore
-        }
-      }
-      await controller.waitIfPaused();
-      try {
-        child.stdout.resume();
-      } catch {
-        // ignore
-      }
+      if (controller) await controller.waitIfPaused();
+    };
+    const paintDelay = async () => {
+      if (controller) await controller.delay(24);
+      else await new Promise((r) => setTimeout(r, 24));
     };
     const batchSize = 12;
-    const paintDelayMs = 24;
 
     /** @type {SearchItem[]} */
     const items = [];
@@ -506,6 +568,10 @@ function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
         buffer = parts.pop() || "";
         for (const line of parts) {
           if (!line) continue;
+          if (isCancelled()) {
+            killChild();
+            return;
+          }
           if (items.length >= maxResults) {
             killChild();
             break;
@@ -515,7 +581,7 @@ function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
           items.push(item);
           if (items.length === 1 || items.length % batchSize === 0) {
             onBatch({ items: items.slice(), done: false, total: items.length });
-            await new Promise((r) => setTimeout(r, paintDelayMs));
+            await paintDelay();
             await waitIfPaused();
             if (isCancelled()) {
               killChild();
@@ -593,6 +659,10 @@ function fallbackSearchStreaming(rootPath, query, maxResults, options, hooks = {
     const waitIfPaused = async () => {
       if (controller) await controller.waitIfPaused();
     };
+    const paintDelay = async () => {
+      if (controller) await controller.delay(24);
+      else await new Promise((r) => setTimeout(r, 24));
+    };
     const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
     const matchCase = Boolean(options?.matchCase);
     const wholeWord = Boolean(options?.wholeWord);
@@ -629,6 +699,7 @@ function fallbackSearchStreaming(rootPath, query, maxResults, options, hooks = {
           const filePath = normalizeRelPath(uri.fsPath, rootPath);
           const lines = content.split(/\r?\n/);
           for (let i = 0; i < lines.length && out.length < maxResults; i += 1) {
+            if (isCancelled()) break;
             const src = lines[i];
             let at = -1;
             if (regex) {
@@ -651,7 +722,7 @@ function fallbackSearchStreaming(rootPath, query, maxResults, options, hooks = {
             if (out.length === 1 || sincePaint >= 12) {
               sincePaint = 0;
               onBatch({ items: out.slice(), done: false, total: out.length });
-              await new Promise((r) => setTimeout(r, 24));
+              await paintDelay();
               await waitIfPaused();
               if (isCancelled()) break;
             }
@@ -682,6 +753,10 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
     (typeof hooks.isCancelled === "function" && hooks.isCancelled()) || Boolean(controller?.isCancelled());
   const waitIfPaused = async () => {
     if (controller) await controller.waitIfPaused();
+  };
+  const paintDelay = async () => {
+    if (controller) await controller.delay(16);
+    else await new Promise((r) => setTimeout(r, 16));
   };
   const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
   const { files, folders } = await getIndexedPaths(options?.excludeGitIgnored !== false);
@@ -720,7 +795,7 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
       sincePaint = 0;
       const partial = rankFuzzy(rows.slice(), limit);
       onBatch({ items: partial, done: false, total: partial.length });
-      await new Promise((r) => setTimeout(r, 16));
+      await paintDelay();
       await waitIfPaused();
       if (isCancelled()) break;
     }
@@ -1348,7 +1423,8 @@ async function searchByTabStreaming(tab, query, options, hooks = {}) {
         return items.slice(0, i);
       }
       onBatch({ items: items.slice(0, i), done: false, total: i });
-      await new Promise((r) => setTimeout(r, 0));
+      if (controller) await controller.delay(0);
+      else await new Promise((r) => setTimeout(r, 0));
     }
   }
   onBatch({ items, done: true, total: items.length, stopped: isCancelled() });

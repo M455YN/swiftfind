@@ -2,6 +2,11 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [1.0.1] - 2026-07-16
+
+- Added a **Folder…** button in fullscreen search to pick the search directory via the native Windows folder dialog (scope must stay inside the workspace).
+- Made **Pause** and **Stop** react immediately: pause freezes ripgrep output at once; stop kills the search process and updates the UI without waiting for the next batch.
+
 ## [1.0.0] - 2026-07-15
 
 - Added **Action** sidebar section with VS Code-style tiles: **Fullscreen Search** and **Fullscreen Replace**; **Task Runner** remains below.
