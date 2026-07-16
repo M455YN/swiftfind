@@ -58,13 +58,20 @@ function markDirty() {
   documentUpdated = true;
 }
 
-function debounce(ms, callback) {
+function debounce(getMs, callback) {
   let timer;
   return (value) =>
     new Promise((resolve) => {
       if (timer) clearTimeout(timer);
+      const ms = typeof getMs === "function" ? getMs() : getMs;
       timer = setTimeout(async () => resolve(await callback(value)), ms);
     });
+}
+
+function debounceMsForTab(tab) {
+  if (tab === "files" || tab === "folders") return 60;
+  if (tab === "symbols" || tab === "commands") return 120;
+  return 180;
 }
 
 async function openFullscreenResults(query) {
@@ -187,7 +194,9 @@ function openQuickSearch() {
   const selected = vscode.window.activeTextEditor?.document.getText(vscode.window.activeTextEditor.selection);
   if (selected) quickPick.value = selected;
 
-  const updateItems = debounce(180, (value) => runQuickPickSearch(quickPick, value));
+  const updateItems = debounce(() => debounceMsForTab(activeTab), (value) =>
+    runQuickPickSearch(quickPick, value)
+  );
   lastUpdateFn = updateItems;
 
   quickPick.onDidChangeValue((value) => {

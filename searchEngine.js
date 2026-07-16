@@ -1,5 +1,6 @@
 const vscode = require("vscode");
 const childProcess = require("child_process");
+const os = require("os");
 const path = require("path");
 const fs = require("fs/promises");
 const { t } = require("./i18n");
@@ -14,8 +15,11 @@ const { t } = require("./i18n");
  */
 
 const DEFAULT_EXCLUDE_GLOBS = [
-  "**/{node_modules,.git,dist,build,out,.next,.cache,.venv,venv}/**",
+  "**/{node_modules,.git,dist,build,out,.next,.nuxt,.cache,.turbo,.parcel-cache,.venv,venv,coverage,tmp,temp,target,vendor,.pnpm-store,.yarn}/**",
+  "**/.pnpm/**",
+  "**/bower_components/**",
   "**/*.dtbcache",
+  "**/*.dtbcache.v2",
   "**/*.bin",
   "**/*.exe",
   "**/*.dll",
@@ -47,7 +51,11 @@ const DEFAULT_EXCLUDE_GLOBS = [
   "**/*.eot",
   "**/*.mp3",
   "**/*.mp4",
-  "**/*.wav"
+  "**/*.wav",
+  "**/*.suo",
+  "**/*.map",
+  "**/.vscode/swiftfind-path-index.cache",
+  "**/.vscode/swiftfind-path-index.cache.*"
 ];
 
 /** Path index for Files/Folders tabs (and git-aware refresh). */
@@ -58,16 +66,43 @@ const pathIndex = {
   gitHead: "",
   /** @type {string[]} */
   files: [],
+  /** Original-case basenames parallel to `files`. */
+  /** @type {string[]} */
+  fileBaseNames: [],
+  /** Lowercased basenames parallel to `files`. */
+  /** @type {string[]} */
+  fileBases: [],
+  /** @type {Set<string>} */
+  fileSet: new Set(),
   /** @type {string[]} */
   folders: [],
+  /** Lowercased folder paths parallel to `folders`. */
+  /** @type {string[]} */
+  folderLowers: [],
+  /** @type {Set<string>} */
+  folderSet: new Set(),
+  /** @type {Map<string, number[]> | null} */
+  fileCharIndex: null,
+  /** @type {Map<string, number[]> | null} */
+  folderCharIndex: null,
   dirty: true,
-  /** @type {Promise<void> | null} */
+  /** @type {Promise<number> | null} */
   buildPromise: null,
   /** @type {ReturnType<typeof setTimeout> | null} */
   settleTimer: null,
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  persistTimer: null,
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  searchIndexTimer: null,
   /** @type {(() => void) | null} */
   onInvalidate: null
 };
+
+const PATH_INDEX_CACHE_VERSION = 1;
+const PATH_INDEX_CACHE_NAME = "swiftfind-path-index.cache";
+
+/** @type {{ root: string, value: string, at: number }} */
+let gitHeadCache = { root: "", value: "", at: 0 };
 
 function getRootPath() {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
@@ -212,6 +247,25 @@ function getExcludeRegexes() {
 function isExcludedPath(relPath) {
   const p = String(relPath || "").replaceAll("\\", "/");
   if (!p) return false;
+  // Fast path for common heavy dirs (avoids regex scan on every path).
+  if (
+    p === "node_modules" ||
+    p.startsWith("node_modules/") ||
+    p.includes("/node_modules/") ||
+    p === ".git" ||
+    p.startsWith(".git/") ||
+    p.includes("/.git/") ||
+    p.includes("/.pnpm/") ||
+    p.includes("/dist/") ||
+    p.includes("/build/") ||
+    p.includes("/.next/") ||
+    p.includes("/target/") ||
+    p.includes("/vendor/") ||
+    p.endsWith("/swiftfind-path-index.cache") ||
+    p.includes("/swiftfind-path-index.cache.")
+  ) {
+    return true;
+  }
   const base = path.posix.basename(p);
   return getExcludeRegexes().some((r) => r.test(p) || r.test(base));
 }
@@ -312,6 +366,11 @@ async function getBundledRipgrepPath() {
   return null;
 }
 
+function rgThreadCount() {
+  const cpus = Number(os.cpus()?.length) || 4;
+  return String(Math.min(8, Math.max(2, cpus)));
+}
+
 function buildRgArgs(query, options, listFiles) {
   const scopedTarget = normalizeScopePath(options?.scopePath) || ".";
   const args = [
@@ -320,6 +379,9 @@ function buildRgArgs(query, options, listFiles) {
     ...(listFiles ? [] : ["--line-number", "--column"]),
     "--color",
     "never",
+    "--no-config",
+    "--threads",
+    rgThreadCount(),
     options?.wholeWord ? "-w" : "",
     options?.useRegex ? "" : "-F",
     options?.excludeGitIgnored ? "" : "--no-ignore-vcs",
@@ -754,54 +816,103 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
   const waitIfPaused = async () => {
     if (controller) await controller.waitIfPaused();
   };
-  const paintDelay = async () => {
-    if (controller) await controller.delay(16);
-    else await new Promise((r) => setTimeout(r, 16));
+  const yieldToEventLoop = async () => {
+    if (controller) await controller.delay(0);
+    else await new Promise((r) => setTimeout(r, 0));
   };
   const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
-  const { files, folders } = await getIndexedPaths(options?.excludeGitIgnored !== false);
-  const source = kind === "folders" ? folders : files;
+  await getIndexedPaths(options?.excludeGitIgnored !== false);
+  if (isCancelled()) {
+    onBatch({ items: [], done: true, total: 0, stopped: true });
+    return [];
+  }
+
+  const isFolders = kind === "folders";
+  const paths = isFolders ? pathIndex.folders : pathIndex.files;
+  const lowers = isFolders ? pathIndex.folderLowers : pathIndex.fileBases;
   const fuzzy = Boolean(options?.fuzzy);
   const needle = String(query || "").toLowerCase();
+  const cap = Math.max(1, Number(limit) || 1);
+  const candidates = candidateIndicesFor(needle, isFolders ? "folders" : "files");
+  if (Array.isArray(candidates) && candidates.length === 0) {
+    onBatch({ items: [], done: true, total: 0, stopped: false });
+    return [];
+  }
+
   /** @type {{item: SearchItem, s: number}[]} */
   const rows = [];
+  let scanned = 0;
   let sincePaint = 0;
+  let lastEmitted = 0;
 
-  for (const rel of source) {
-    await waitIfPaused();
-    if (isCancelled()) break;
-    const hay = kind === "folders" ? rel : path.posix.basename(rel);
-    const s = fuzzy ? fuzzyScore(hay, needle) : hay.toLowerCase().includes(needle) ? 1 : -1;
-    if (s < 0) continue;
-    const item =
-      kind === "folders"
-        ? {
-            label: `$(folder) ${path.posix.basename(rel)}`,
-            description: rel,
-            detail: "Folder"
-          }
-        : {
-            label: `$(file) ${path.posix.basename(rel)}`,
-            description: rel,
-            detail: "File",
-            filePath: rel,
-            lineNumber: 1,
-            column: 1
-          };
-    if (!filterItem(item)) continue;
+  const consider = (i) => {
+    const hay = lowers[i] || "";
+    const s = fuzzy ? fuzzyScore(hay, needle) : hay.includes(needle) ? 1 : -1;
+    if (s < 0) return;
+    const rel = paths[i];
+    const baseName = isFolders
+      ? path.posix.basename(rel)
+      : pathIndex.fileBaseNames[i] || path.posix.basename(rel);
+    const item = isFolders
+      ? {
+          label: `$(folder) ${baseName}`,
+          description: rel,
+          detail: "Folder"
+        }
+      : {
+          label: `$(file) ${baseName}`,
+          description: rel,
+          detail: "File",
+          filePath: rel,
+          lineNumber: 1,
+          column: 1
+        };
+    if (!filterItem(item)) return;
     rows.push({ item, s });
     sincePaint += 1;
-    if (rows.length === 1 || sincePaint >= 40) {
-      sincePaint = 0;
-      const partial = rankFuzzy(rows.slice(), limit);
-      onBatch({ items: partial, done: false, total: partial.length });
-      await paintDelay();
-      await waitIfPaused();
-      if (isCancelled()) break;
+  };
+
+  const maybePaint = async () => {
+    if (!(rows.length === 1 || sincePaint >= 120)) return false;
+    sincePaint = 0;
+    if (rows.length === lastEmitted) return false;
+    lastEmitted = rows.length;
+    const partial = rankFuzzy(rows.slice(), cap);
+    onBatch({ items: partial, done: false, total: partial.length });
+    await yieldToEventLoop();
+    await waitIfPaused();
+    return isCancelled();
+  };
+
+  if (candidates) {
+    for (let c = 0; c < candidates.length; c += 1) {
+      scanned += 1;
+      if (scanned % 4000 === 0) {
+        await waitIfPaused();
+        if (isCancelled()) break;
+        await yieldToEventLoop();
+        if (isCancelled()) break;
+      }
+      consider(candidates[c]);
+      if (!fuzzy && rows.length >= cap) break;
+      if (await maybePaint()) break;
+    }
+  } else {
+    for (let i = 0; i < paths.length; i += 1) {
+      scanned += 1;
+      if (scanned % 4000 === 0) {
+        await waitIfPaused();
+        if (isCancelled()) break;
+        await yieldToEventLoop();
+        if (isCancelled()) break;
+      }
+      consider(i);
+      if (!fuzzy && rows.length >= cap) break;
+      if (await maybePaint()) break;
     }
   }
 
-  const items = rankFuzzy(rows, limit);
+  const items = rankFuzzy(rows, cap);
   onBatch({ items, done: true, total: items.length, stopped: isCancelled() });
   return items;
 }
@@ -973,8 +1084,25 @@ function search(text, options) {
 }
 
 function rankFuzzy(rows, limit) {
+  const cap = Math.max(1, Number(limit) || 1);
+  if (!rows.length) return [];
+  // Non-fuzzy matches all share score 1 — skip expensive sort.
+  if (rows.length > 1 && rows[0].s === 1) {
+    let allSame = true;
+    for (let i = 1; i < rows.length; i += 1) {
+      if (rows[i].s !== 1) {
+        allSame = false;
+        break;
+      }
+    }
+    if (allSame) return rows.slice(0, cap).map((r) => r.item);
+  }
+  if (rows.length <= cap) {
+    rows.sort((a, b) => b.s - a.s);
+    return rows.map((r) => r.item);
+  }
   rows.sort((a, b) => b.s - a.s);
-  return rows.slice(0, limit).map((r) => r.item);
+  return rows.slice(0, cap).map((r) => r.item);
 }
 
 async function readGitHead(rootPath) {
@@ -983,6 +1111,24 @@ async function readGitHead(rootPath) {
   } catch {
     return "";
   }
+}
+
+async function readGitHeadCached(rootPath) {
+  const now = Date.now();
+  if (gitHeadCache.root === rootPath && now - gitHeadCache.at < 2500) {
+    return gitHeadCache.value;
+  }
+  const value = await readGitHead(rootPath);
+  gitHeadCache = { root: rootPath, value, at: now };
+  return value;
+}
+
+function clearGitHeadCache() {
+  gitHeadCache = { root: "", value: "", at: 0 };
+}
+
+function cmpPath(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function foldersFromFiles(files) {
@@ -997,9 +1143,244 @@ function foldersFromFiles(files) {
       dir = parent;
     }
   }
-  return [...dirs].sort((a, b) => a.localeCompare(b));
+  return [...dirs].sort(cmpPath);
 }
 
+/**
+ * Posting lists: char -> indices into lowers[] that contain that char.
+ * Used to skip most of the index for uncommon query characters.
+ * @param {string[]} lowers
+ */
+function buildCharPostings(lowers) {
+  /** @type {Map<string, number[]>} */
+  const map = new Map();
+  for (let i = 0; i < lowers.length; i += 1) {
+    const b = lowers[i];
+    /** @type {Set<string>} */
+    const seen = new Set();
+    for (let k = 0; k < b.length; k += 1) {
+      const ch = b[k];
+      if (seen.has(ch)) continue;
+      seen.add(ch);
+      let arr = map.get(ch);
+      if (!arr) {
+        arr = [];
+        map.set(ch, arr);
+      }
+      arr.push(i);
+    }
+  }
+  return map;
+}
+
+function rebuildSearchIndexes() {
+  pathIndex.fileCharIndex = buildCharPostings(pathIndex.fileBases);
+  pathIndex.folderCharIndex = buildCharPostings(pathIndex.folderLowers);
+}
+
+function scheduleRebuildSearchIndexes() {
+  if (pathIndex.searchIndexTimer) clearTimeout(pathIndex.searchIndexTimer);
+  pathIndex.searchIndexTimer = setTimeout(() => {
+    pathIndex.searchIndexTimer = null;
+    rebuildSearchIndexes();
+  }, 250);
+}
+
+/**
+ * @param {number[]} a sorted ascending
+ * @param {number[]} b sorted ascending
+ */
+function intersectSortedIndices(a, b) {
+  if (!a.length || !b.length) return [];
+  if (a.length > b.length) return intersectSortedIndices(b, a);
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const av = a[i];
+    const bv = b[j];
+    if (av === bv) {
+      out.push(av);
+      i += 1;
+      j += 1;
+    } else if (av < bv) i += 1;
+    else j += 1;
+  }
+  return out;
+}
+
+/**
+ * @param {string} needle lowercased
+ * @param {"files"|"folders"} kind
+ * @returns {number[] | null} candidate indices, empty array = no match, null = scan all
+ */
+function candidateIndicesFor(needle, kind) {
+  const lowers = kind === "folders" ? pathIndex.folderLowers : pathIndex.fileBases;
+  const index = kind === "folders" ? pathIndex.folderCharIndex : pathIndex.fileCharIndex;
+  if (!needle || !index || !lowers.length) return null;
+  /** @type {number[][]} */
+  const lists = [];
+  for (let k = 0; k < needle.length; k += 1) {
+    const arr = index.get(needle[k]);
+    if (!arr || !arr.length) return [];
+    lists.push(arr);
+  }
+  if (!lists.length) return null;
+  if (lists.length === 1) {
+    const only = lists[0];
+    return only.length > lowers.length * 0.42 ? null : only;
+  }
+  lists.sort((a, b) => a.length - b.length);
+  let best = lists[0];
+  for (let n = 1; n < lists.length; n += 1) {
+    best = intersectSortedIndices(best, lists[n]);
+    if (!best.length) return [];
+    if (best.length > lowers.length * 0.42) return null;
+  }
+  return best.length > lowers.length * 0.42 ? null : best;
+}
+
+/**
+ * @param {string[]} files
+ * @param {string[]=} foldersOpt
+ * @param {boolean=} deferCharIndex schedule char postings off the hot path (disk load)
+ */
+function setPathIndexFiles(files, foldersOpt, deferCharIndex = false) {
+  pathIndex.files = files;
+  pathIndex.fileBaseNames = files.map((rel) => path.posix.basename(rel));
+  pathIndex.fileBases = pathIndex.fileBaseNames.map((b) => b.toLowerCase());
+  pathIndex.fileSet = new Set(files);
+  pathIndex.folders = foldersOpt || foldersFromFiles(files);
+  pathIndex.folderLowers = pathIndex.folders.map((d) => d.toLowerCase());
+  pathIndex.folderSet = new Set(pathIndex.folders);
+  if (deferCharIndex) {
+    pathIndex.fileCharIndex = null;
+    pathIndex.folderCharIndex = null;
+    scheduleRebuildSearchIndexes();
+  } else {
+    rebuildSearchIndexes();
+  }
+}
+
+function addFolderChainToIndex(rel) {
+  let dir = path.posix.dirname(rel);
+  while (dir && dir !== ".") {
+    if (!pathIndex.folderSet.has(dir)) {
+      pathIndex.folderSet.add(dir);
+      pathIndex.folders.push(dir);
+      pathIndex.folderLowers.push(dir.toLowerCase());
+    }
+    const parent = path.posix.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+}
+
+function rebuildFoldersFromFiles() {
+  pathIndex.folders = foldersFromFiles(pathIndex.files);
+  pathIndex.folderLowers = pathIndex.folders.map((d) => d.toLowerCase());
+  pathIndex.folderSet = new Set(pathIndex.folders);
+}
+
+function getIndexCachePath(rootPath) {
+  return path.join(rootPath, ".vscode", PATH_INDEX_CACHE_NAME);
+}
+
+function schedulePersistPathIndex() {
+  if (pathIndex.persistTimer) clearTimeout(pathIndex.persistTimer);
+  pathIndex.persistTimer = setTimeout(() => {
+    pathIndex.persistTimer = null;
+    persistPathIndexToDisk().catch(() => {});
+  }, 900);
+}
+
+async function flushPathIndexCache() {
+  if (pathIndex.persistTimer) {
+    clearTimeout(pathIndex.persistTimer);
+    pathIndex.persistTimer = null;
+  }
+  if (pathIndex.searchIndexTimer) {
+    clearTimeout(pathIndex.searchIndexTimer);
+    pathIndex.searchIndexTimer = null;
+    rebuildSearchIndexes();
+  }
+  await persistPathIndexToDisk();
+}
+
+async function persistPathIndexToDisk() {
+  const rootPath = pathIndex.rootPath || getRootPath();
+  if (!rootPath || pathIndex.dirty || !pathIndex.files.length) return;
+  const dir = path.join(rootPath, ".vscode");
+  await fs.mkdir(dir, { recursive: true });
+  const target = getIndexCachePath(rootPath);
+  const tmp = `${target}.${process.pid}.tmp`;
+  const meta = JSON.stringify({
+    v: PATH_INDEX_CACHE_VERSION,
+    excludeGitIgnored: pathIndex.excludeGitIgnored,
+    globsKey: pathIndex.excludeGlobsKey,
+    gitHead: pathIndex.gitHead,
+    count: pathIndex.files.length
+  });
+  const content =
+    `SWIFTFIND_PATH_INDEX_V1\n${meta}\n---files---\n${pathIndex.files.join("\n")}\n---folders---\n${pathIndex.folders.join("\n")}\n`;
+  await fs.writeFile(tmp, content, "utf8");
+  try {
+    await fs.rename(tmp, target);
+  } catch {
+    // Windows can't rename over an existing file.
+    try {
+      await fs.unlink(target);
+    } catch {
+      // ignore
+    }
+    await fs.rename(tmp, target);
+  }
+}
+
+/**
+ * @returns {Promise<boolean>}
+ */
+async function tryLoadPathIndexFromDisk(rootPath, excludeGitIgnored, globsKey, gitHead) {
+  try {
+    const raw = await fs.readFile(getIndexCachePath(rootPath), "utf8");
+    if (!raw.startsWith("SWIFTFIND_PATH_INDEX_V1\n")) return false;
+    const filesMarker = "\n---files---\n";
+    const foldersMarker = "\n---folders---\n";
+    const filesAt = raw.indexOf(filesMarker);
+    if (filesAt < 0) return false;
+    const metaLine = raw.slice("SWIFTFIND_PATH_INDEX_V1\n".length, filesAt);
+    const meta = JSON.parse(metaLine);
+    if (!meta || meta.v !== PATH_INDEX_CACHE_VERSION) return false;
+    if (Boolean(meta.excludeGitIgnored) !== Boolean(excludeGitIgnored)) return false;
+    if (String(meta.globsKey || "") !== globsKey) return false;
+    if (String(meta.gitHead || "") !== String(gitHead || "")) return false;
+
+    const foldersAt = raw.indexOf(foldersMarker, filesAt);
+    const filesBlock =
+      foldersAt >= 0
+        ? raw.slice(filesAt + filesMarker.length, foldersAt)
+        : raw.slice(filesAt + filesMarker.length);
+    const foldersBlock = foldersAt >= 0 ? raw.slice(foldersAt + foldersMarker.length) : "";
+    const files = filesBlock.split(/\r?\n/).filter(Boolean);
+    const folders = foldersBlock.split(/\r?\n/).filter(Boolean);
+    if (!files.length) return false;
+
+    pathIndex.rootPath = rootPath;
+    pathIndex.excludeGitIgnored = Boolean(excludeGitIgnored);
+    pathIndex.excludeGlobsKey = globsKey;
+    pathIndex.gitHead = String(gitHead || "");
+    setPathIndexFiles(files, folders.length ? folders : undefined, true);
+    pathIndex.dirty = false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stream `rg --files` line-by-line (avoids one giant stdout string).
+ * Trusts rg `--glob` excludes; skips a second JS exclude pass for speed.
+ */
 function listWorkspaceFilesWithRg(rootPath, excludeGitIgnored) {
   return new Promise(async (resolve) => {
     const rgPath = await getBundledRipgrepPath();
@@ -1007,27 +1388,60 @@ function listWorkspaceFilesWithRg(rootPath, excludeGitIgnored) {
       resolve(null);
       return;
     }
-    const args = ["--files", "--color", "never", excludeGitIgnored ? "" : "--no-ignore-vcs"].filter(Boolean);
+    const args = [
+      "--files",
+      "--color",
+      "never",
+      "--no-messages",
+      "--no-config",
+      "--threads",
+      rgThreadCount(),
+      excludeGitIgnored ? "" : "--no-ignore-vcs"
+    ].filter(Boolean);
     pushRgExcludeGlobs(args);
-    const child = childProcess.spawn(rgPath, args, { cwd: rootPath, windowsHide: true });
-    let stdout = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += String(chunk);
-      if (stdout.length > 64 * 1024 * 1024) child.kill();
+    const child = childProcess.spawn(rgPath, args, {
+      cwd: rootPath,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"]
     });
-    child.stderr.on("data", () => {});
-    child.on("error", () => resolve(null));
+    /** @type {string[]} */
+    const files = [];
+    let buffer = "";
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    child.stdout.on("data", (chunk) => {
+      buffer += String(chunk);
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() || "";
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const p = normalizeRelPath(trimmed, rootPath);
+        if (p) files.push(p);
+      }
+      if (files.length > 500000) {
+        try {
+          child.kill();
+        } catch {
+          // ignore
+        }
+      }
+    });
+    child.on("error", () => finish(null));
     child.on("close", (code) => {
-      if (code !== 0 && code !== 1) {
-        resolve(null);
+      if (buffer.trim()) {
+        const p = normalizeRelPath(buffer.trim(), rootPath);
+        if (p) files.push(p);
+      }
+      if (code !== 0 && code !== 1 && !files.length) {
+        finish(null);
         return;
       }
-      resolve(
-        stdout
-          .split(/\r?\n/)
-          .map((l) => normalizeRelPath(l.trim(), rootPath))
-          .filter((p) => p && !isExcludedPath(p))
-      );
+      finish(files);
     });
   });
 }
@@ -1038,17 +1452,16 @@ async function listWorkspaceFilesFallback(rootPath) {
     findFilesExcludePattern(rootPath),
     100000
   );
-  return uris
-    .map((uri) => normalizeRelPath(uri.fsPath, rootPath))
-    .filter((p) => p && !isExcludedPath(p));
+  return uris.map((uri) => normalizeRelPath(uri.fsPath, rootPath)).filter((p) => p && !isExcludedPath(p));
 }
 
 function invalidatePathIndex(reason = "manual") {
   pathIndex.dirty = true;
+  if (reason === "git-head") clearGitHeadCache();
   if (pathIndex.settleTimer) clearTimeout(pathIndex.settleTimer);
-  // Checkout/FS churn and folder switches: rebuild after a short settle.
+  // FS churn: longer settle so we coalesce bursts instead of rebuilding constantly.
   const delay =
-    reason === "git-head" ? 400 : reason === "fs" ? 200 : reason === "workspace" ? 150 : 50;
+    reason === "git-head" ? 500 : reason === "fs" ? 1200 : reason === "workspace" ? 200 : 50;
   pathIndex.settleTimer = setTimeout(() => {
     pathIndex.settleTimer = null;
     warmPathIndex(reason).catch(() => {});
@@ -1060,38 +1473,201 @@ function invalidatePathIndex(reason = "manual") {
   }
 }
 
+/**
+ * Map a workspace URI to a relative index path, or "" if outside/excluded.
+ * @param {vscode.Uri | undefined} uri
+ */
+function uriToIndexRel(uri) {
+  if (!uri || uri.scheme === "untitled") return "";
+  const root = pathIndex.rootPath || getRootPath();
+  if (!root) return "";
+  const rel = normalizeRelPath(uri.fsPath, root);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return "";
+  if (isExcludedPath(rel)) return "";
+  return rel.replaceAll("\\", "/");
+}
+
+/**
+ * Incremental create/delete/rename patch — avoids full `rg --files` on every FS event.
+ * Falls back to a coalesced full rebuild when the index is not ready.
+ * @param {{
+ *   created?: readonly vscode.Uri[],
+ *   deleted?: readonly vscode.Uri[],
+ *   renamed?: readonly { oldUri: vscode.Uri, newUri: vscode.Uri }[]
+ * }} delta
+ */
+function patchPathIndexFromFs(delta) {
+  if (
+    pathIndex.dirty ||
+    pathIndex.buildPromise ||
+    !pathIndex.rootPath ||
+    pathIndex.rootPath !== getRootPath()
+  ) {
+    invalidatePathIndex("fs");
+    return false;
+  }
+
+  /** @type {string[]} */
+  const toAdd = [];
+  /** @type {string[]} */
+  const toRemove = [];
+  /** @type {{ from: string, to: string }[]} */
+  const prefixRewrites = [];
+
+  for (const uri of delta.created || []) {
+    const rel = uriToIndexRel(uri);
+    if (rel) toAdd.push(rel);
+  }
+  for (const uri of delta.deleted || []) {
+    const root = pathIndex.rootPath;
+    if (!root || !uri) continue;
+    const rel = normalizeRelPath(uri.fsPath, root).replaceAll("\\", "/");
+    if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) toRemove.push(rel);
+  }
+  for (const entry of delta.renamed || []) {
+    const root = pathIndex.rootPath;
+    if (!root || !entry?.oldUri || !entry?.newUri) continue;
+    const oldRel = normalizeRelPath(entry.oldUri.fsPath, root).replaceAll("\\", "/");
+    const newRel = normalizeRelPath(entry.newUri.fsPath, root).replaceAll("\\", "/");
+    if (!oldRel || oldRel.startsWith("..") || path.isAbsolute(oldRel)) continue;
+    if (pathIndex.fileSet.has(oldRel)) {
+      toRemove.push(oldRel);
+      if (newRel && !newRel.startsWith("..") && !path.isAbsolute(newRel) && !isExcludedPath(newRel)) {
+        toAdd.push(newRel);
+      }
+    } else if (newRel && !newRel.startsWith("..") && !path.isAbsolute(newRel)) {
+      // Folder rename: rewrite all indexed paths under the old prefix.
+      prefixRewrites.push({ from: oldRel, to: newRel });
+    }
+  }
+
+  let changed = false;
+
+  for (const { from, to } of prefixRewrites) {
+    const fromPrefix = from.endsWith("/") ? from : `${from}/`;
+    const toPrefix = to.endsWith("/") ? to : `${to}/`;
+    const nextFiles = [];
+    const nextBaseNames = [];
+    const nextBases = [];
+    let rewriteChanged = false;
+    for (let i = 0; i < pathIndex.files.length; i += 1) {
+      const f = pathIndex.files[i];
+      let next = f;
+      if (f === from) next = to;
+      else if (f.startsWith(fromPrefix)) next = toPrefix + f.slice(fromPrefix.length);
+      if (next !== f) rewriteChanged = true;
+      if (isExcludedPath(next)) continue;
+      nextFiles.push(next);
+      if (next === f) {
+        nextBaseNames.push(pathIndex.fileBaseNames[i]);
+        nextBases.push(pathIndex.fileBases[i]);
+      } else {
+        const base = path.posix.basename(next);
+        nextBaseNames.push(base);
+        nextBases.push(base.toLowerCase());
+      }
+    }
+    if (rewriteChanged) {
+      pathIndex.files = nextFiles;
+      pathIndex.fileBaseNames = nextBaseNames;
+      pathIndex.fileBases = nextBases;
+      pathIndex.fileSet = new Set(nextFiles);
+      rebuildFoldersFromFiles();
+      changed = true;
+    }
+  }
+
+  let removedAny = false;
+  if (toRemove.length) {
+    /** @type {Set<string>} */
+    const drop = new Set();
+    for (const rel of toRemove) {
+      if (pathIndex.fileSet.has(rel)) {
+        drop.add(rel);
+        continue;
+      }
+      const prefix = rel.endsWith("/") ? rel : `${rel}/`;
+      for (const f of pathIndex.fileSet) {
+        if (f === rel || f.startsWith(prefix)) drop.add(f);
+      }
+    }
+    if (drop.size) {
+      const nextFiles = [];
+      const nextBaseNames = [];
+      const nextBases = [];
+      for (let i = 0; i < pathIndex.files.length; i += 1) {
+        const f = pathIndex.files[i];
+        if (drop.has(f)) continue;
+        nextFiles.push(f);
+        nextBaseNames.push(pathIndex.fileBaseNames[i]);
+        nextBases.push(pathIndex.fileBases[i]);
+      }
+      if (nextFiles.length !== pathIndex.files.length) {
+        pathIndex.files = nextFiles;
+        pathIndex.fileBaseNames = nextBaseNames;
+        pathIndex.fileBases = nextBases;
+        pathIndex.fileSet = new Set(nextFiles);
+        removedAny = true;
+        changed = true;
+      }
+    }
+  }
+
+  for (const rel of toAdd) {
+    if (pathIndex.fileSet.has(rel)) continue;
+    pathIndex.fileSet.add(rel);
+    pathIndex.files.push(rel);
+    const base = path.posix.basename(rel);
+    pathIndex.fileBaseNames.push(base);
+    pathIndex.fileBases.push(base.toLowerCase());
+    addFolderChainToIndex(rel);
+    changed = true;
+  }
+
+  if (removedAny) rebuildFoldersFromFiles();
+  if (changed) {
+    // Char postings are stale until rebuilt; null forces a safe linear scan.
+    pathIndex.fileCharIndex = null;
+    pathIndex.folderCharIndex = null;
+    scheduleRebuildSearchIndexes();
+    schedulePersistPathIndex();
+  }
+  return changed;
+}
+
 async function rebuildPathIndex(rootPath, excludeGitIgnored) {
-  const gitHead = await readGitHead(rootPath);
+  const gitHead = await readGitHeadCached(rootPath);
   const globsKey = excludeGlobsKey();
   let files = await listWorkspaceFilesWithRg(rootPath, excludeGitIgnored);
   if (!files) files = await listWorkspaceFilesFallback(rootPath);
-  files = files.filter((p) => !isExcludedPath(p));
-  files.sort((a, b) => a.localeCompare(b));
+  files.sort(cmpPath);
   pathIndex.rootPath = rootPath;
   pathIndex.excludeGitIgnored = excludeGitIgnored;
   pathIndex.excludeGlobsKey = globsKey;
   pathIndex.gitHead = gitHead;
-  pathIndex.files = files;
-  pathIndex.folders = foldersFromFiles(files);
+  setPathIndexFiles(files);
   pathIndex.dirty = false;
+  schedulePersistPathIndex();
   return files.length;
 }
 
 /**
  * Cached workspace path list. Rebuilds when dirty, root changes, ignore mode
  * flips, or git HEAD (branch/checkout) differs from the indexed snapshot.
+ * Loads `.vscode/swiftfind-path-index.cache` when memory is empty.
  * @returns {Promise<{ files: string[], folders: string[], rebuilt: boolean, count: number }>}
  */
 async function getIndexedPaths(excludeGitIgnored = true) {
   const rootPath = getRootPath();
   if (!rootPath) return { files: [], folders: [], rebuilt: false, count: 0 };
 
-  const gitHead = await readGitHead(rootPath);
+  const gitHead = await readGitHeadCached(rootPath);
   const globsKey = excludeGlobsKey();
+  const mode = Boolean(excludeGitIgnored);
   const needsRebuild =
     pathIndex.dirty ||
     pathIndex.rootPath !== rootPath ||
-    pathIndex.excludeGitIgnored !== Boolean(excludeGitIgnored) ||
+    pathIndex.excludeGitIgnored !== mode ||
     pathIndex.excludeGlobsKey !== globsKey ||
     pathIndex.gitHead !== gitHead;
 
@@ -1104,12 +1680,33 @@ async function getIndexedPaths(excludeGitIgnored = true) {
     };
   }
 
+  // Prefer disk cache over a full workspace walk, except when memory is only
+  // marked dirty (incremental patches may be newer than the file on disk).
+  const onlyDirty =
+    pathIndex.dirty &&
+    pathIndex.files.length > 0 &&
+    pathIndex.rootPath === rootPath &&
+    pathIndex.excludeGitIgnored === mode &&
+    pathIndex.excludeGlobsKey === globsKey &&
+    pathIndex.gitHead === gitHead;
+  if (!onlyDirty) {
+    const loaded = await tryLoadPathIndexFromDisk(rootPath, mode, globsKey, gitHead);
+    if (loaded) {
+      return {
+        files: pathIndex.files,
+        folders: pathIndex.folders,
+        rebuilt: false,
+        count: pathIndex.files.length
+      };
+    }
+  }
+
   if (pathIndex.buildPromise) {
     await pathIndex.buildPromise;
     if (
       !pathIndex.dirty &&
       pathIndex.rootPath === rootPath &&
-      pathIndex.excludeGitIgnored === Boolean(excludeGitIgnored) &&
+      pathIndex.excludeGitIgnored === mode &&
       pathIndex.excludeGlobsKey === globsKey &&
       pathIndex.gitHead === gitHead
     ) {
@@ -1122,7 +1719,7 @@ async function getIndexedPaths(excludeGitIgnored = true) {
     }
   }
 
-  pathIndex.buildPromise = rebuildPathIndex(rootPath, Boolean(excludeGitIgnored));
+  pathIndex.buildPromise = rebuildPathIndex(rootPath, mode);
   try {
     const count = await pathIndex.buildPromise;
     return { files: pathIndex.files, folders: pathIndex.folders, rebuilt: true, count };
@@ -1142,10 +1739,25 @@ async function warmPathIndex(reason = "startup") {
   if (!rootPath) {
     pathIndex.rootPath = "";
     pathIndex.files = [];
+    pathIndex.fileBaseNames = [];
+    pathIndex.fileBases = [];
+    pathIndex.fileSet = new Set();
     pathIndex.folders = [];
+    pathIndex.folderLowers = [];
+    pathIndex.folderSet = new Set();
+    pathIndex.fileCharIndex = null;
+    pathIndex.folderCharIndex = null;
     pathIndex.gitHead = "";
     pathIndex.dirty = true;
     return;
+  }
+
+  // Startup: try disk cache first (silent). Only toast when we must rebuild.
+  if (reason === "startup") {
+    const gitHead = await readGitHeadCached(rootPath);
+    const globsKey = excludeGlobsKey();
+    const loaded = await tryLoadPathIndexFromDisk(rootPath, true, globsKey, gitHead);
+    if (loaded) return;
   }
 
   if (!INDEX_TOAST_REASONS.has(reason)) {
@@ -1186,7 +1798,10 @@ function bindGitHeadWatcher() {
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(vscode.Uri.file(rootPath), ".git/HEAD")
   );
-  const onHead = () => invalidatePathIndex("git-head");
+  const onHead = () => {
+    clearGitHeadCache();
+    invalidatePathIndex("git-head");
+  };
   watcher.onDidChange(onHead);
   watcher.onDidCreate(onHead);
   watcher.onDidDelete(onHead);
@@ -1227,18 +1842,25 @@ function initPathIndexWatchers(context, hooks) {
 
 async function searchFiles(query, limit, options) {
   if (!query) return [];
-  const { files } = await getIndexedPaths(options?.excludeGitIgnored !== false);
+  await getIndexedPaths(options?.excludeGitIgnored !== false);
   const fuzzy = Boolean(options?.fuzzy);
   const needle = query.toLowerCase();
+  const cap = Math.max(1, Number(limit) || 1);
+  const candidates = candidateIndicesFor(needle, "files");
+  if (Array.isArray(candidates) && candidates.length === 0) return [];
   /** @type {{item: SearchItem, s: number}[]} */
   const rows = [];
-  for (const rel of files) {
-    const base = path.posix.basename(rel).toLowerCase();
+  const files = pathIndex.files;
+  const bases = pathIndex.fileBases;
+  const baseNames = pathIndex.fileBaseNames;
+  const visit = (i) => {
+    const base = bases[i] || "";
     const s = fuzzy ? fuzzyScore(base, needle) : base.includes(needle) ? 1 : -1;
-    if (s < 0) continue;
+    if (s < 0) return;
+    const rel = files[i];
     rows.push({
       item: {
-        label: `$(file) ${path.posix.basename(rel)}`,
+        label: `$(file) ${baseNames[i] || path.posix.basename(rel)}`,
         description: rel,
         detail: "File",
         filePath: rel,
@@ -1247,20 +1869,38 @@ async function searchFiles(query, limit, options) {
       },
       s
     });
+  };
+  if (candidates) {
+    for (let c = 0; c < candidates.length; c += 1) {
+      visit(candidates[c]);
+      if (!fuzzy && rows.length >= cap) break;
+    }
+  } else {
+    for (let i = 0; i < files.length; i += 1) {
+      visit(i);
+      if (!fuzzy && rows.length >= cap) break;
+    }
   }
-  return rankFuzzy(rows, limit);
+  return rankFuzzy(rows, cap);
 }
 
 async function searchFolders(query, limit, options) {
   if (!query) return [];
-  const { folders } = await getIndexedPaths(options?.excludeGitIgnored !== false);
+  await getIndexedPaths(options?.excludeGitIgnored !== false);
   const fuzzy = Boolean(options?.fuzzy);
   const needle = query.toLowerCase();
+  const cap = Math.max(1, Number(limit) || 1);
+  const candidates = candidateIndicesFor(needle, "folders");
+  if (Array.isArray(candidates) && candidates.length === 0) return [];
   /** @type {{item: SearchItem, s: number}[]} */
   const rows = [];
-  for (const dir of folders) {
-    const s = fuzzy ? fuzzyScore(dir, needle) : dir.toLowerCase().includes(needle) ? 1 : -1;
-    if (s < 0) continue;
+  const folders = pathIndex.folders;
+  const lowers = pathIndex.folderLowers;
+  const visit = (i) => {
+    const hay = lowers[i] || "";
+    const s = fuzzy ? fuzzyScore(hay, needle) : hay.includes(needle) ? 1 : -1;
+    if (s < 0) return;
+    const dir = folders[i];
     rows.push({
       item: {
         label: `$(folder) ${path.posix.basename(dir)}`,
@@ -1269,8 +1909,19 @@ async function searchFolders(query, limit, options) {
       },
       s
     });
+  };
+  if (candidates) {
+    for (let c = 0; c < candidates.length; c += 1) {
+      visit(candidates[c]);
+      if (!fuzzy && rows.length >= cap) break;
+    }
+  } else {
+    for (let i = 0; i < folders.length; i += 1) {
+      visit(i);
+      if (!fuzzy && rows.length >= cap) break;
+    }
   }
-  return rankFuzzy(rows, limit);
+  return rankFuzzy(rows, cap);
 }
 
 async function searchSymbols(query, limit, options) {
@@ -1682,6 +2333,8 @@ module.exports = {
   replaceAllInScope,
   replaceInString,
   invalidatePathIndex,
+  patchPathIndexFromFs,
+  flushPathIndexCache,
   warmPathIndex,
   initPathIndexWatchers
 };

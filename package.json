@@ -2,7 +2,7 @@
   "name": "swift-find",
   "displayName": "SwiftFind",
   "description": "Fast unified search for VS Code with tabs and rich filters.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "M455YN",
   "author": {
     "name": "Mateusz Afelt"
@@ -316,9 +316,11 @@
             "type": "string"
           },
           "default": [
-            "**/{node_modules,.git,dist,build,out,.next,.cache,.venv,venv}/**",
+            "**/{node_modules,.git,dist,build,out,.next,.nuxt,.cache,.turbo,.parcel-cache,.venv,venv,coverage,tmp,temp,target,vendor,.pnpm-store,.yarn}/**",
+            "**/.pnpm/**",
+            "**/bower_components/**",
             "**/*.dtbcache",
-	    "**/*.dtbcache.v2",
+            "**/*.dtbcache.v2",
             "**/*.bin",
             "**/*.exe",
             "**/*.dll",
@@ -351,7 +353,10 @@
             "**/*.mp3",
             "**/*.mp4",
             "**/*.wav",
-            "**/*.suo"
+            "**/*.suo",
+            "**/*.map",
+            "**/.vscode/swiftfind-path-index.cache",
+            "**/.vscode/swiftfind-path-index.cache.*"
           ],
           "description": "%cfg.excludeGlobs%"
         }

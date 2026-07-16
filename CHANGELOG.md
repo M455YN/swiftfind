@@ -2,6 +2,10 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [1.0.2] - 2026-07-16
+
+- Performance changes
+
 ## [1.0.1] - 2026-07-16
 
 - Added a **Folder…** button in fullscreen search to pick the search directory via the native Windows folder dialog (scope must stay inside the workspace).

@@ -3,12 +3,43 @@ const { openQuickSearch, markDirty, toggleOption, nextTab, prevTab } = require("
 const { openFullscreenSearch, pushFullscreenConfig } = require("./fullscreenUi");
 const { TasksExplorerProvider } = require("./tasksExplorer");
 const { openReplacePanel, replaceInActiveEditor } = require("./replaceUi");
-const { initPathIndexWatchers, invalidatePathIndex } = require("./searchEngine");
+const { initPathIndexWatchers, patchPathIndexFromFs, flushPathIndexCache } = require("./searchEngine");
 const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
 const { registerSidebarActions } = require("./sidebarActionsUi");
 
-function onTreeChanged() {
-  invalidatePathIndex("fs");
+/**
+ * @param {vscode.FileCreateEvent | vscode.FileDeleteEvent} e
+ * @param {"created" | "deleted"} kind
+ */
+function onFilesMutated(e, kind) {
+  const uris = Array.isArray(e?.files) ? e.files : [];
+  if (kind === "deleted") {
+    patchPathIndexFromFs({ deleted: uris });
+    markDirty();
+    return;
+  }
+  // Skip empty directory creates — only index real files.
+  Promise.all(
+    uris.map(async (uri) => {
+      try {
+        const st = await vscode.workspace.fs.stat(uri);
+        return st.type & vscode.FileType.File ? uri : null;
+      } catch {
+        return null;
+      }
+    })
+  ).then((list) => {
+    const created = list.filter(Boolean);
+    if (created.length) patchPathIndexFromFs({ created });
+    markDirty();
+  });
+}
+
+/**
+ * @param {vscode.FileRenameEvent} e
+ */
+function onFilesRenamed(e) {
+  patchPathIndexFromFs({ renamed: e?.files || [] });
   markDirty();
 }
 
@@ -46,6 +77,12 @@ function activate(context) {
     }
   });
 
+  context.subscriptions.push({
+    dispose: () => {
+      flushPathIndexCache().catch(() => {});
+    }
+  });
+
   maybeShowWelcomeOnStartup(context).catch(() => {});
   registerSidebarActions(context);
 
@@ -65,9 +102,9 @@ function activate(context) {
         tasksProvider.refresh();
       }
     }),
-    vscode.workspace.onDidDeleteFiles(onTreeChanged),
-    vscode.workspace.onDidCreateFiles(onTreeChanged),
-    vscode.workspace.onDidRenameFiles(onTreeChanged),
+    vscode.workspace.onDidDeleteFiles((e) => onFilesMutated(e, "deleted")),
+    vscode.workspace.onDidCreateFiles((e) => onFilesMutated(e, "created")),
+    vscode.workspace.onDidRenameFiles(onFilesRenamed),
     vscode.window.registerTreeDataProvider("swiftFind.tasksExplorer", tasksProvider),
     vscode.commands.registerCommand("swiftFind.tasks.refresh", () => tasksProvider.refresh()),
     vscode.commands.registerCommand("swiftFind.tasks.openTask", async (node) => {
@@ -183,6 +220,8 @@ function activate(context) {
   );
 }
 
-function deactivate() {}
+function deactivate() {
+  flushPathIndexCache().catch(() => {});
+}
 
 module.exports = { activate, deactivate };
