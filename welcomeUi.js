@@ -111,6 +111,8 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
         openReplaceDesc: "Zamień w zakresie workspace",
         openSettings: "Ustawienia",
         openSettingsDesc: "Max results, exclude globs, search on type",
+        rebuildIndex: "Odbuduj indeks",
+        rebuildIndexDesc: "Usuń cache i zbuduj listę plików od nowa",
         walkthrough: "Pierwsze kroki",
         steps: [
           ["Otwórz wyszukiwanie", "Ctrl+Alt+Shift+Space", "swiftFind.open"],
@@ -122,10 +124,11 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
         learn: "Warto wiedzieć",
         learnItems: [
           ["Karty", "Pliki · Foldery · Tekst · Symbole · Polecenia"],
-          ["Opcje w UI", "Aa · W · .* · Fuzzy · Git ignore · .searchignore"],
+          ["Cache indeksu", ".vscode/swiftfind-path-index.cache — bez .gitignore / bin / obj"],
+          ["Szukanie tekstu", "Tylko w plikach z cache (spójne z kartą Pliki)"],
+          ["Odbudowa cache", "Command Palette → „SwiftFind: Odbuduj cache indeksu plików”"],
           ["PPM w Explorerze", "Szukaj tutaj / Zamień tutaj na pliku lub folderze"],
-          ["Wyniki", "Jeden tab fullscreen — ponowne otwarcie tylko odświeża"],
-          ["Indeks", "Buduje się w tle przy starcie i zmianie brancha"]
+          ["Wyniki", "Jeden tab fullscreen — ponowne otwarcie tylko odświeża"]
         ],
         tip: "Ponownie: Command Palette → „SwiftFind: Witaj”.",
         dontShow: "Nie pokazuj dla tej wersji"
@@ -144,6 +147,8 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
         openReplaceDesc: "Replace across the workspace scope",
         openSettings: "Settings",
         openSettingsDesc: "Max results, exclude globs, search on type",
+        rebuildIndex: "Rebuild index",
+        rebuildIndexDesc: "Delete cache and rebuild the file list",
         walkthrough: "Walkthrough",
         steps: [
           ["Open search", "Ctrl+Alt+Shift+Space", "swiftFind.open"],
@@ -155,10 +160,11 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
         learn: "Learn",
         learnItems: [
           ["Tabs", "Files · Folders · Text · Symbols · Commands"],
-          ["UI options", "Aa · W · .* · Fuzzy · Git ignore · .searchignore"],
+          ["Index cache", ".vscode/swiftfind-path-index.cache — skips .gitignore / bin / obj"],
+          ["Text search", "Only files from the cache (same set as the Files tab)"],
+          ["Rebuild cache", "Command Palette → “SwiftFind: Rebuild File Index Cache”"],
           ["Explorer context menu", "Search Here / Replace Here on a file or folder"],
-          ["Results", "One fullscreen tab — reopen refreshes instead of duplicating"],
-          ["Index", "Warm on startup and after branch switches"]
+          ["Results", "One fullscreen tab — reopen refreshes instead of duplicating"]
         ],
         tip: "Reopen anytime: Command Palette → “SwiftFind: Welcome”.",
         dontShow: "Don't show for this version"
@@ -168,6 +174,7 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
     ["swiftFind.open", L.openSearch, L.openSearchDesc],
     ["swiftFind.openFullscreen", L.openFullscreen, L.openFullscreenDesc],
     ["swiftFind.openReplace", L.openReplace, L.openReplaceDesc],
+    ["swiftFind.rebuildIndex", L.rebuildIndex, L.rebuildIndexDesc],
     ["settings", L.openSettings, L.openSettingsDesc]
   ]
     .map(

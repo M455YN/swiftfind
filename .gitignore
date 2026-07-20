@@ -12,6 +12,8 @@ Thumbs.db
 
 .vscode-test/
 .vscode-test-web/
+.vscode/swiftfind-path-index.cache
+.vscode/swiftfind-path-index.cache.*
 
 coverage/
 dist/

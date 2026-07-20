@@ -25,6 +25,12 @@ Open from status bar with `SwiftFind` as well.
 
 ## Features
 
+### File index cache
+
+SwiftFind keeps a workspace file list in `.vscode/swiftfind-path-index.cache` (always respects `.gitignore`, plus common folders like `bin` / `obj`). **Text** search runs only over that list, so it matches the Files tab.
+
+Rebuild anytime via Command Palette: **SwiftFind: Rebuild File Index Cache**.
+
 ### Search Options (while modal is open)
 
 | Toggle | Shortcut | Description |

@@ -3,7 +3,7 @@ const { openQuickSearch, markDirty, toggleOption, nextTab, prevTab } = require("
 const { openFullscreenSearch, pushFullscreenConfig } = require("./fullscreenUi");
 const { TasksExplorerProvider } = require("./tasksExplorer");
 const { openReplacePanel, replaceInActiveEditor } = require("./replaceUi");
-const { initPathIndexWatchers, patchPathIndexFromFs, flushPathIndexCache } = require("./searchEngine");
+const { initPathIndexWatchers, patchPathIndexFromFs, flushPathIndexCache, rebuildPathIndexCache } = require("./searchEngine");
 const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
 const { registerSidebarActions } = require("./sidebarActionsUi");
 
@@ -205,6 +205,9 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("swiftFind.replaceInEditor", () => replaceInActiveEditor()),
     vscode.commands.registerCommand("swiftFind.showWelcome", () => openWelcomePage(context)),
+    vscode.commands.registerCommand("swiftFind.rebuildIndex", async () => {
+      await rebuildPathIndexCache();
+    }),
     vscode.commands.registerCommand("swiftFind.focusTasks", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.swiftFind");
       await vscode.commands.executeCommand("swiftFind.tasksExplorer.focus");

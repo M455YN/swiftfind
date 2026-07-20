@@ -7,6 +7,7 @@
   "cmd.openReplace": "SwiftFind: Znajdz i zamien w plikach",
   "cmd.replaceInEditor": "SwiftFind: Zamień w aktywnym pliku / zaznaczeniu",
   "cmd.showWelcome": "SwiftFind: Witaj",
+  "cmd.rebuildIndex": "SwiftFind: Odbuduj cache indeksu plików",
   "cmd.toggleCase": "SwiftFind: Przelacz uwzglednianie wielkosci liter",
   "cmd.toggleRegex": "SwiftFind: Przelacz regex",
   "cmd.toggleWholeWord": "SwiftFind: Przelacz dopasowanie calego slowa",

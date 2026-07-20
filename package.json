@@ -2,7 +2,7 @@
   "name": "swift-find",
   "displayName": "SwiftFind",
   "description": "Fast unified search for VS Code with tabs and rich filters.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "publisher": "M455YN",
   "author": {
     "name": "Mateusz Afelt"
@@ -37,6 +37,7 @@
     "onCommand:swiftFind.replaceInEditor",
     "onCommand:swiftFind.open",
     "onCommand:swiftFind.showWelcome",
+    "onCommand:swiftFind.rebuildIndex",
     "onCommand:swiftFind.explorer.searchHere",
     "onCommand:swiftFind.explorer.replaceHere",
     "onView:swiftFind.tasksExplorer",
@@ -69,6 +70,11 @@
       {
         "command": "swiftFind.showWelcome",
         "title": "%cmd.showWelcome%"
+      },
+      {
+        "command": "swiftFind.rebuildIndex",
+        "title": "%cmd.rebuildIndex%",
+        "icon": "$(refresh)"
       },
       {
         "command": "swiftFind.toggleCaseSensitive",
@@ -319,6 +325,9 @@
             "**/{node_modules,.git,dist,build,out,.next,.nuxt,.cache,.turbo,.parcel-cache,.venv,venv,coverage,tmp,temp,target,vendor,.pnpm-store,.yarn}/**",
             "**/.pnpm/**",
             "**/bower_components/**",
+            "**/[Bb]in/**",
+            "**/[Oo]bj/**",
+            "**/.vs/**",
             "**/*.dtbcache",
             "**/*.dtbcache.v2",
             "**/*.bin",
@@ -354,6 +363,7 @@
             "**/*.mp4",
             "**/*.wav",
             "**/*.suo",
+            "**/*.user",
             "**/*.map",
             "**/.vscode/swiftfind-path-index.cache",
             "**/.vscode/swiftfind-path-index.cache.*"

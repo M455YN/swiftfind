@@ -2,6 +2,13 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [1.0.3] - 2026-07-20
+
+- Path index cache in `.vscode/swiftfind-path-index.cache` always honors `.gitignore` (plus hard excludes like `bin` / `obj`).
+- Text search and replace now scan **only** files from that cache (`rg --files-from`), so results stay consistent with the Files tab.
+- Added command **SwiftFind: Rebuild File Index Cache** (`swiftFind.rebuildIndex`) — deletes the cache file and rebuilds it.
+- Updated Welcome page for the new index/cache workflow.
+
 ## [1.0.2] - 2026-07-16
 
 - Performance changes
