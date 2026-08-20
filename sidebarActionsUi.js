@@ -1,5 +1,9 @@
 const vscode = require("vscode");
 const { isPolish } = require("./i18n");
+const { modernUiBodyClass, modernUiSharedCss } = require("./modernUi");
+
+/** @type {vscode.WebviewView | null} */
+let sidebarView = null;
 
 /**
  * Left sidebar: VS Code-style action tiles above Task Runner.
@@ -8,8 +12,12 @@ const { isPolish } = require("./i18n");
 function registerSidebarActions(context) {
   const provider = {
     resolveWebviewView(webviewView) {
+      sidebarView = webviewView;
       webviewView.webview.options = { enableScripts: true };
       webviewView.webview.html = getHtml(webviewView.webview);
+      webviewView.onDidDispose(() => {
+        if (sidebarView === webviewView) sidebarView = null;
+      });
       webviewView.webview.onDidReceiveMessage(async (msg) => {
         if (!msg || typeof msg !== "object") return;
         if (msg.type === "fullscreenSearch") {
@@ -28,6 +36,11 @@ function registerSidebarActions(context) {
       webviewOptions: { retainContextWhenHidden: true }
     })
   );
+}
+
+function pushSidebarModernUi(enabled) {
+  if (!sidebarView) return;
+  sidebarView.webview.postMessage({ type: "modernUi", enabled });
 }
 
 /**
@@ -100,7 +113,7 @@ function getHtml(webview) {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    transition: background .12s ease, border-color .12s ease;
+    transition: background .12s ease, border-color .12s ease, border-radius .12s ease;
   }
   .tile:hover {
     background: var(--tile-hover);
@@ -120,9 +133,26 @@ function getHtml(webview) {
     font-size: 12px;
     line-height: 1.4;
   }
+  ${modernUiSharedCss()}
+  body.modern-ui {
+    --tile-bg: var(--vscode-surface-background, var(--tile-bg));
+    --tile-border: var(--sf-border, var(--tile-border));
+  }
+  body.modern-ui .wrap {
+    padding: var(--sf-pad-y, 10px) var(--vscode-spacing-size100, 10px) var(--vscode-spacing-size60, 6px);
+  }
+  body.modern-ui .tiles {
+    gap: var(--sf-gap, 8px);
+  }
+  body.modern-ui .tile {
+    border-radius: var(--sf-r-surface, 8px);
+    border-width: var(--sf-stroke, 1px);
+    padding: var(--vscode-spacing-size120, 12px);
+    gap: var(--vscode-spacing-size40, 4px);
+  }
 </style>
 </head>
-<body>
+<body class="${modernUiBodyClass()}">
   <div class="wrap">
     <div class="tiles">
       <button class="tile" id="btnSearch" type="button">
@@ -143,9 +173,15 @@ function getHtml(webview) {
   document.getElementById("btnReplace").addEventListener("click", () => {
     vscode.postMessage({ type: "fullscreenReplace" });
   });
+  window.addEventListener("message", (event) => {
+    const msg = event.data;
+    if (msg && msg.type === "modernUi") {
+      document.body.classList.toggle("modern-ui", !!msg.enabled);
+    }
+  });
 </script>
 </body>
 </html>`;
 }
 
-module.exports = { registerSidebarActions };
+module.exports = { registerSidebarActions, pushSidebarModernUi };

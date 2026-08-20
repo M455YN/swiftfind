@@ -10,6 +10,7 @@ const {
 } = require("./searchEngine");
 const { isPolish } = require("./i18n");
 const { markDirty } = require("./quickPickUi");
+const { isModernUiEnabled, modernUiBodyClass, modernUiSharedCss } = require("./modernUi");
 
 /** @type {vscode.WebviewPanel | null} */
 let fullscreenPanel = null;
@@ -283,7 +284,8 @@ async function openFullscreenSearch(payload) {
       query,
       replace,
       showReplace,
-      options
+      options,
+      modernUi: isModernUiEnabled()
     });
     return;
   }
@@ -400,6 +402,12 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       display: grid;
       gap: 8px;
     }
+    .chrome > .title-row { order: 0; }
+    .chrome > .tabs { order: 1; }
+    .chrome > .find-row { order: 2; }
+    .chrome > .replace-row { order: 3; }
+    .chrome > .toolbar { order: 4; }
+    .chrome > .progress { order: 5; }
     .title-row {
       display: flex;
       align-items: center;
@@ -466,27 +474,10 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       background: var(--vscode-button-hoverBackground);
       color: var(--vscode-button-foreground);
     }
-    .find-actions .icon-btn {
-      width: 28px;
-      height: 28px;
-      border: 1px solid var(--vscode-button-border, transparent);
-      background: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-    .find-actions .icon-btn:hover:not(:disabled) {
-      background: var(--vscode-button-secondaryHoverBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-    .find-actions .icon-btn.primary {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-      border-color: transparent;
-    }
-    .find-actions .icon-btn.primary:hover:not(:disabled) {
-      background: var(--vscode-button-hoverBackground);
-    }
     .tabs {
       display: flex;
+      flex-wrap: wrap;
+      align-items: center;
       gap: 0;
       border-bottom: 1px solid var(--sf-border);
       margin: 0 -12px;
@@ -498,17 +489,25 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       background: transparent;
       color: var(--sf-muted);
       padding: 7px 11px 8px;
-      margin-bottom: -1px;
+      margin: 0 0 -1px;
+      border-radius: 0;
       border-bottom: 2px solid transparent;
       cursor: pointer;
       font: inherit;
       font-size: 12px;
+      font-weight: 400;
+      line-height: 18px;
     }
     .tab:hover { color: var(--vscode-foreground); }
     .tab.active {
       color: var(--vscode-foreground);
+      background: transparent;
       border-bottom-color: var(--vscode-focusBorder, var(--vscode-textLink-foreground));
       font-weight: 600;
+    }
+    .tab:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 1px;
     }
     .find-row {
       display: grid;
@@ -550,6 +549,30 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       padding: 2px 3px 2px 6px;
       border-left: 1px solid var(--sf-border);
     }
+    .find-field-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .find-field-actions .icon-btn {
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--vscode-button-border, transparent);
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    .find-field-actions .icon-btn:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground);
+      color: var(--vscode-button-secondaryForeground);
+    }
+    .find-field-actions .icon-btn.primary {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: transparent;
+    }
+    .find-field-actions .icon-btn.primary:hover:not(:disabled) {
+      background: var(--vscode-button-hoverBackground);
+    }
     .tog {
       position: relative;
       display: inline-flex;
@@ -584,7 +607,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     }
     .find-actions {
       display: flex;
-      gap: 4px;
+      gap: 6px;
       align-items: center;
     }
     .btn {
@@ -890,12 +913,170 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
     }
     .ctx button:hover { background: var(--vscode-list-hoverBackground); }
     @media (max-width: 720px) {
-      .find-row { grid-template-columns: 1fr; }
-      .find-actions { justify-content: flex-end; }
+      .find-row, .replace-row { grid-template-columns: 1fr; }
+      .find-actions, .find-field-actions { justify-content: flex-end; }
+    }
+    ${modernUiSharedCss()}
+    body.modern-ui {
+      background: var(--vscode-surface-background, var(--vscode-editor-background));
+      --sf-row-h: 26px;
+    }
+    body.modern-ui .chrome {
+      padding: var(--sf-pad-y, 12px) var(--sf-pad-x, 16px) var(--vscode-spacing-size80, 8px);
+      gap: var(--vscode-spacing-size100, 10px);
+      background: transparent;
+      border-bottom: var(--sf-stroke, 1px) solid var(--sf-border);
+    }
+    body.modern-ui .chrome > .find-row { order: 1; }
+    body.modern-ui .chrome > .tabs { order: 2; }
+    body.modern-ui .title {
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+    body.modern-ui .tabs {
+      gap: 6px;
+      border-bottom: 0;
+      margin: 0;
+      padding: 0;
+    }
+    body.modern-ui .tab {
+      background: var(--vscode-tab-inactiveBackground, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+      color: var(--vscode-tab-inactiveForeground, var(--sf-muted));
+      border-bottom: 0;
+      margin: 0;
+      padding: 5px 12px;
+      border-radius: var(--sf-r-surface, 8px);
+      font-size: 13px;
+    }
+    body.modern-ui .tab:hover {
+      color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
+      background: var(--vscode-tab-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
+    }
+    body.modern-ui .tab.active {
+      color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
+      background: var(--vscode-tab-activeBackground, color-mix(in srgb, var(--vscode-foreground) 14%, transparent));
+      border-bottom: 0;
+      font-weight: 500;
+    }
+    body.modern-ui .find-row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      border: var(--sf-stroke, 1px) solid var(--sf-border);
+      border-radius: var(--sf-r-surface, 8px);
+      background: var(--vscode-input-background);
+      min-height: 32px;
+      padding-right: 4px;
+    }
+    body.modern-ui .find-field {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      overflow: visible;
+      min-height: 32px;
+      outline: none;
+    }
+    body.modern-ui .find-field:focus-within {
+      border-color: transparent;
+      outline: none;
+    }
+    body.modern-ui .find-row:focus-within {
+      border-color: var(--vscode-focusBorder);
+    }
+    body.modern-ui #q,
+    body.modern-ui #replace {
+      padding: 7px 12px;
+    }
+    body.modern-ui .togs {
+      border-left: 0;
+      gap: 0;
+      padding: 0 2px;
+    }
+    body.modern-ui .find-field-actions {
+      gap: 0;
+      padding-right: 2px;
+    }
+    body.modern-ui .find-field-actions .icon-btn {
+      width: 24px;
+      height: 24px;
+      border: 0;
+      background: transparent;
+      color: var(--sf-muted);
+    }
+    body.modern-ui .find-field-actions .icon-btn:hover:not(:disabled) {
+      background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18));
+      color: var(--vscode-foreground);
+    }
+    body.modern-ui .find-field-actions .icon-btn.primary {
+      background: transparent;
+      color: var(--sf-muted);
+    }
+    body.modern-ui .find-field-actions .icon-btn.primary:hover:not(:disabled) {
+      background: var(--vscode-toolbar-hoverBackground, rgba(127,127,127,.18));
+      color: var(--vscode-foreground);
+    }
+    body.modern-ui .replace-row .find-field {
+      border: var(--sf-stroke, 1px) solid var(--sf-border);
+      border-radius: var(--sf-r-surface, 8px);
+      background: var(--vscode-input-background);
+      min-height: 32px;
+    }
+    body.modern-ui .btn {
+      border-radius: var(--sf-r-ctrl, 4px);
+      padding: 5px 12px;
+    }
+    body.modern-ui .toolbar { gap: var(--sf-gap, 8px); padding-top: 2px; }
+    body.modern-ui .badge {
+      border-radius: var(--sf-r-badge, 9999px);
+      min-width: 20px;
+      padding: 2px 7px;
+    }
+    body.modern-ui .hit { border-radius: var(--vscode-cornerRadius-xSmall, 2px); }
+    body.modern-ui .ctx {
+      border-radius: var(--sf-r-surface, 8px);
+      border-color: var(--sf-border);
+      box-shadow: 0 12px 28px rgba(0,0,0,.28);
+    }
+    body.modern-ui #summary {
+      padding: var(--vscode-spacing-size80, 8px) var(--sf-pad-x, 16px);
+      background: transparent;
+    }
+    body.modern-ui #out {
+      padding: var(--vscode-spacing-size40, 4px) var(--vscode-spacing-size80, 8px) var(--vscode-spacing-size200, 20px);
+    }
+    body.modern-ui .folder-head,
+    body.modern-ui .file-head,
+    body.modern-ui .match,
+    body.modern-ui .row {
+      border-radius: var(--sf-row-radius, 6px);
+      margin: 0 2px;
+    }
+    body.modern-ui .folder-head,
+    body.modern-ui .file-head {
+      padding: 4px 10px 4px 8px;
+      min-height: 28px;
+    }
+    body.modern-ui .match,
+    body.modern-ui .row {
+      padding-top: 3px;
+      padding-bottom: 3px;
+      padding-right: 10px;
+      min-height: var(--sf-row-h);
+    }
+    body.modern-ui .folder-body {
+      margin-left: 4px;
+      padding-left: 4px;
+    }
+    body.modern-ui .progress {
+      height: 3px;
+      border-radius: var(--sf-r-badge, 9999px);
+      overflow: hidden;
     }
   </style>
 </head>
-<body class="${initialShowReplace ? "replace-open" : ""}">
+<body class="${[initialShowReplace ? "replace-open" : "", modernUiBodyClass()].filter(Boolean).join(" ")}">
   <div class="chrome">
     <div class="title-row">
       <div class="title">${L.resultsTitle}</div>
@@ -907,13 +1088,6 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
           </svg>
         </button>
       </div>
-    </div>
-    <div class="tabs" id="tabs" role="tablist">
-      <button class="tab" data-tab="files" role="tab">${L.files}</button>
-      <button class="tab" data-tab="folders" role="tab">${L.folders}</button>
-      <button class="tab active" data-tab="text" role="tab">${L.text}</button>
-      <button class="tab" data-tab="symbols" role="tab">${L.symbols}</button>
-      <button class="tab" data-tab="commands" role="tab">${L.commands}</button>
     </div>
     <div class="find-row">
       <div class="find-field">
@@ -927,7 +1101,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
           <label class="tog" title="${L.exclSearch}"><input id="excludeSearchIgnored" type="checkbox" ${initialOptions.excludeSearchIgnored ? "checked" : ""} /><span>S</span></label>
         </div>
       </div>
-      <div class="find-actions">
+      <div class="find-field-actions">
         <button class="icon-btn primary" id="go" type="button" title="${L.search}" aria-label="${L.search}">
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10.8 9.9h-.6l-.2-.2a4.4 4.4 0 1 0-.5.5l.2.2v.6l3.4 3.4.9-.9-3.2-3.4zm-4 0A3.1 3.1 0 1 1 9.9 6.8 3.1 3.1 0 0 1 6.8 9.9z"/></svg>
         </button>
@@ -938,6 +1112,13 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
           <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3.5 3.5h9v9h-9z"/></svg>
         </button>
       </div>
+    </div>
+    <div class="tabs" id="tabs" role="tablist">
+      <button class="tab" data-tab="files" role="tab">${L.files}</button>
+      <button class="tab" data-tab="folders" role="tab">${L.folders}</button>
+      <button class="tab active" data-tab="text" role="tab">${L.text}</button>
+      <button class="tab" data-tab="symbols" role="tab">${L.symbols}</button>
+      <button class="tab" data-tab="commands" role="tab">${L.commands}</button>
     </div>
     <div class="replace-row">
       <div class="find-field">
@@ -1234,6 +1415,9 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
 
       if (msg.type === "config") {
         searchOnType = msg.searchOnType !== false;
+        if (typeof msg.modernUi === "boolean") {
+          document.body.classList.toggle("modern-ui", msg.modernUi);
+        }
         refreshQueryPlaceholder();
         if (!q.value.trim()) {
           out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
@@ -1249,6 +1433,9 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
       }
 
       if (msg.type === "hydrate") {
+        if (typeof msg.modernUi === "boolean") {
+          document.body.classList.toggle("modern-ui", msg.modernUi);
+        }
         const opts = msg.options || {};
         q.value = String(msg.query || "");
         replaceEl.value = String(msg.replace || "");
@@ -1267,6 +1454,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
           summary.textContent = "";
           titleMeta.textContent = "";
           setBusy(false);
+          q.focus();
         }
         if (replaceOpen) replaceEl.focus();
         return;
@@ -1795,7 +1983,8 @@ module.exports = {
     if (!fullscreenPanel) return;
     fullscreenPanel.webview.postMessage({
       type: "config",
-      searchOnType: getConfig().searchOnType !== false
+      searchOnType: getConfig().searchOnType !== false,
+      modernUi: isModernUiEnabled()
     });
   }
 };

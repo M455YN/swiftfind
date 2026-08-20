@@ -4,8 +4,9 @@ const { openFullscreenSearch, pushFullscreenConfig } = require("./fullscreenUi")
 const { TasksExplorerProvider } = require("./tasksExplorer");
 const { openReplacePanel, replaceInActiveEditor } = require("./replaceUi");
 const { initPathIndexWatchers, patchPathIndexFromFs, flushPathIndexCache, rebuildPathIndexCache } = require("./searchEngine");
-const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
-const { registerSidebarActions } = require("./sidebarActionsUi");
+const { openWelcomePage, maybeShowWelcomeOnStartup, pushWelcomeModernUi } = require("./welcomeUi");
+const { registerSidebarActions, pushSidebarModernUi } = require("./sidebarActionsUi");
+const { watchModernUi } = require("./modernUi");
 
 function onFilesMutated(e, kind) {
   const uris = Array.isArray(e?.files) ? e.files : [];
@@ -76,8 +77,14 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (!e.affectsConfiguration("swiftFind.searchOnType")) return;
+      if (e.affectsConfiguration("swiftFind.searchOnType")) {
+        pushFullscreenConfig();
+      }
+    }),
+    watchModernUi((enabled) => {
       pushFullscreenConfig();
+      pushWelcomeModernUi(enabled);
+      pushSidebarModernUi(enabled);
     })
   );
 

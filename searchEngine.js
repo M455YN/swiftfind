@@ -767,20 +767,14 @@ function writeFilesToRgStdin(child, files) {
   });
 }
 
-function runRipgrep(rootPath, query, options, listFiles, files) {
-  return new Promise(async (resolve) => {
-    const rgPath = await getBundledRipgrepPath();
-    if (!rgPath) {
-      resolve(null);
-      return;
-    }
+async function runRipgrep(rootPath, query, options, listFiles, files) {
+  const rgPath = await getBundledRipgrepPath();
+  if (!rgPath) return null;
 
-    const useFilesFrom = Array.isArray(files);
-    if (useFilesFrom && !files.length) {
-      resolve([]);
-      return;
-    }
+  const useFilesFrom = Array.isArray(files);
+  if (useFilesFrom && !files.length) return [];
 
+  return new Promise((resolve) => {
     const child = childProcess.spawn(rgPath, buildRgArgs(query, options, listFiles, useFilesFrom), {
       cwd: rootPath,
       windowsHide: true,
@@ -946,26 +940,23 @@ function createSearchController() {
  * }=} hooks
  * @returns {Promise<SearchItem[] | null>}
  */
-function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
-  return new Promise(async (resolve) => {
-    const rgPath = await getBundledRipgrepPath();
-    if (!rgPath) {
-      resolve(null);
-      return;
-    }
+async function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
+  const rgPath = await getBundledRipgrepPath();
+  if (!rgPath) return null;
 
-    const maxResults = Math.max(1, Number(hooks.maxResults) || getConfig().maxResults);
-    const onBatch = typeof hooks.onBatch === "function" ? hooks.onBatch : () => {};
-    const controller = hooks.controller;
-    const isCancelled = () =>
-      (typeof hooks.isCancelled === "function" && hooks.isCancelled()) || Boolean(controller?.isCancelled());
-    const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
-    const useFilesFrom = Array.isArray(hooks.files);
-    if (useFilesFrom && !hooks.files.length) {
-      onBatch({ items: [], done: true, total: 0 });
-      resolve([]);
-      return;
-    }
+  const maxResults = Math.max(1, Number(hooks.maxResults) || getConfig().maxResults);
+  const onBatch = typeof hooks.onBatch === "function" ? hooks.onBatch : () => {};
+  const controller = hooks.controller;
+  const isCancelled = () =>
+    (typeof hooks.isCancelled === "function" && hooks.isCancelled()) || Boolean(controller?.isCancelled());
+  const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
+  const useFilesFrom = Array.isArray(hooks.files);
+  if (useFilesFrom && !hooks.files.length) {
+    onBatch({ items: [], done: true, total: 0 });
+    return [];
+  }
+
+  return new Promise((resolve) => {
     const child = childProcess.spawn(rgPath, buildRgArgs(query, options, false, useFilesFrom), {
       cwd: rootPath,
       windowsHide: true,
@@ -1127,8 +1118,7 @@ async function searchTextStreaming(rootPath, query, options, hooks = {}) {
   });
 }
 
-function fallbackSearchStreaming(rootPath, query, maxResults, options, hooks = {}) {
-  return new Promise(async (resolve) => {
+async function fallbackSearchStreaming(rootPath, query, maxResults, options, hooks = {}) {
     const onBatch = typeof hooks.onBatch === "function" ? hooks.onBatch : () => {};
     const controller = hooks.controller;
     const isCancelled = () =>
@@ -1206,8 +1196,7 @@ function fallbackSearchStreaming(rootPath, query, maxResults, options, hooks = {
       total: out.length,
       stopped: isCancelled()
     });
-    resolve(out);
-  });
+    return out;
 }
 
 /**
@@ -1763,14 +1752,10 @@ async function tryLoadPathIndexFromDisk(rootPath, excludeGitIgnored, globsKey, g
  * Stream `rg --files` line-by-line (avoids one giant stdout string).
  * Trusts rg `--glob` excludes; skips a second JS exclude pass for speed.
  */
-function listWorkspaceFilesWithRg(rootPath, excludeGitIgnored) {
-  return new Promise(async (resolve) => {
-    const rgPath = await getBundledRipgrepPath();
-    if (!rgPath) {
-      resolve(null);
-      return;
-    }
-    const args = [
+async function listWorkspaceFilesWithRg(rootPath, excludeGitIgnored) {
+  const rgPath = await getBundledRipgrepPath();
+  if (!rgPath) return null;
+  const args = [
       "--files",
       "--color",
       "never",
@@ -1781,6 +1766,7 @@ function listWorkspaceFilesWithRg(rootPath, excludeGitIgnored) {
       excludeGitIgnored ? "" : "--no-ignore-vcs"
     ].filter(Boolean);
     pushRgExcludeGlobs(args);
+    return new Promise((resolve) => {
     const child = childProcess.spawn(rgPath, args, {
       cwd: rootPath,
       windowsHide: true,

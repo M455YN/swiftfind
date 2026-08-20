@@ -2,6 +2,12 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [1.0.4] - 2026-08-20
+
+- Fullscreen search matches the VS Code Settings editor: rounded field on top, filter icons inside, text tabs below.
+- Custom webviews respect `workbench.experimental.modernUI`: classic chrome when off, Settings-style search/tabs when on.
+- Removed dead findstr leftovers and unused exports; simplified QuickPick option maps and search helpers.
+
 ## [1.0.3] - 2026-07-20
 
 - Path index cache in `.vscode/swiftfind-path-index.cache` always honors `.gitignore` (plus hard excludes like `bin` / `obj`).

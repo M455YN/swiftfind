@@ -1,5 +1,6 @@
 const vscode = require("vscode");
 const { isPolish } = require("./i18n");
+const { modernUiBodyClass, modernUiSharedCss, isModernUiEnabled } = require("./modernUi");
 
 /** @type {vscode.WebviewPanel | null} */
 let welcomePanel = null;
@@ -65,6 +66,11 @@ async function openWelcomePage(context, opts = {}) {
     if (welcomePanel === panel) welcomePanel = null;
     void markWelcomeSeen(context);
   });
+}
+
+function pushWelcomeModernUi(enabled = isModernUiEnabled()) {
+  if (!welcomePanel) return;
+  welcomePanel.webview.postMessage({ type: "modernUi", enabled });
 }
 
 /**
@@ -396,9 +402,40 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
       padding: 0;
     }
     .link:hover { text-decoration: underline; }
+    ${modernUiSharedCss()}
+    body.modern-ui {
+      background: var(--vscode-surface-background, var(--vscode-editor-background));
+      --tile-bg: var(--vscode-surface-background, var(--tile-bg));
+      --tile-border: var(--sf-border, var(--tile-border));
+    }
+    body.modern-ui .page {
+      padding: var(--vscode-spacing-size320, 32px) var(--vscode-spacing-size280, 28px) var(--vscode-spacing-size400, 40px);
+    }
+    body.modern-ui .header img {
+      border-radius: var(--sf-r-surface, 8px);
+    }
+    body.modern-ui .tiles {
+      gap: var(--vscode-spacing-size120, 12px);
+    }
+    body.modern-ui .tile,
+    body.modern-ui .step,
+    body.modern-ui .learn-row {
+      border-radius: var(--sf-r-surface, 8px);
+      border-width: var(--sf-stroke, 1px);
+    }
+    body.modern-ui .tile {
+      padding: var(--vscode-spacing-size160, 16px);
+      gap: var(--vscode-spacing-size60, 6px);
+    }
+    body.modern-ui .step {
+      padding: var(--vscode-spacing-size100, 10px) var(--vscode-spacing-size120, 12px);
+    }
+    body.modern-ui .kbd {
+      border-radius: var(--sf-r-ctrl, 4px);
+    }
   </style>
 </head>
-<body>
+<body class="${modernUiBodyClass()}">
   <div class="page">
     <div class="header">
       <img src="${iconUri}" alt="" />
@@ -444,6 +481,12 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
     document.getElementById("btnDismiss").addEventListener("click", () => {
       vscode.postMessage({ type: "dontShowAgain" });
     });
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (msg && msg.type === "modernUi") {
+        document.body.classList.toggle("modern-ui", !!msg.enabled);
+      }
+    });
   </script>
 </body>
 </html>`;
@@ -459,5 +502,6 @@ function escapeHtml(text) {
 
 module.exports = {
   openWelcomePage,
-  maybeShowWelcomeOnStartup
+  maybeShowWelcomeOnStartup,
+  pushWelcomeModernUi
 };
