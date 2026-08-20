@@ -1,107 +1,63 @@
 const vscode = require("vscode");
-const { isPolish } = require("./i18n");
+const { t } = require("./i18n");
 const { modernUiBodyClass, modernUiSharedCss } = require("./modernUi");
 
-/** @type {vscode.WebviewView | null} */
-let sidebarView = null;
+let view;
 
-/**
- * Left sidebar: VS Code-style action tiles above Task Runner.
- * @param {vscode.ExtensionContext} context
- */
 function registerSidebarActions(context) {
-  const provider = {
-    resolveWebviewView(webviewView) {
-      sidebarView = webviewView;
-      webviewView.webview.options = { enableScripts: true };
-      webviewView.webview.html = getHtml(webviewView.webview);
-      webviewView.onDidDispose(() => {
-        if (sidebarView === webviewView) sidebarView = null;
-      });
-      webviewView.webview.onDidReceiveMessage(async (msg) => {
-        if (!msg || typeof msg !== "object") return;
-        if (msg.type === "fullscreenSearch") {
-          await vscode.commands.executeCommand("swiftFind.openFullscreen");
-          return;
-        }
-        if (msg.type === "fullscreenReplace") {
-          await vscode.commands.executeCommand("swiftFind.openReplace");
-        }
-      });
-    }
-  };
-
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("swiftFind.sidebarActions", provider, {
-      webviewOptions: { retainContextWhenHidden: true }
-    })
+    vscode.window.registerWebviewViewProvider("swiftFind.sidebarActions", {
+      resolveWebviewView(wv) {
+        view = wv;
+        wv.webview.options = { enableScripts: true };
+        wv.webview.html = sidebarHtml(wv.webview);
+        wv.onDidDispose(() => {
+          if (view === wv) view = undefined;
+        });
+        wv.webview.onDidReceiveMessage((m) => {
+          if (m?.type === "fullscreenSearch") {
+            vscode.commands.executeCommand("swiftFind.openFullscreen");
+          } else if (m?.type === "fullscreenReplace") {
+            vscode.commands.executeCommand("swiftFind.openReplace");
+          }
+        });
+      }
+    }, { webviewOptions: { retainContextWhenHidden: true } })
   );
 }
 
 function pushSidebarModernUi(enabled) {
-  if (!sidebarView) return;
-  sidebarView.webview.postMessage({ type: "modernUi", enabled });
+  view?.webview.postMessage({ type: "modernUi", enabled });
 }
 
-/**
- * @param {vscode.Webview} webview
- */
-function getHtml(webview) {
-  const pl = isPolish();
-  const csp = [
-    `default-src 'none'`,
-    `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src ${webview.cspSource} 'unsafe-inline'`
-  ].join("; ");
-
-  const L = pl
-    ? {
-        search: "Fullscreen Search",
-        searchDesc: "Szukaj w projekcie — Find in Files",
-        replace: "Fullscreen Replace",
-        replaceDesc: "Znajdź i zamień w plikach workspace"
-      }
-    : {
-        search: "Fullscreen Search",
-        searchDesc: "Search in project — Find in Files",
-        replace: "Fullscreen Replace",
-        replaceDesc: "Find and replace across workspace files"
-      };
+function sidebarHtml(webview) {
+  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline'`;
+  const searchHint = t("Search in project — Find in Files", "Szukaj w projekcie — Find in Files");
+  const replaceHint = t("Find and replace across workspace files", "Znajdź i zamień w plikach workspace");
 
   return `<!DOCTYPE html>
-<html lang="${pl ? "pl" : "en"}">
+<html>
 <head>
 <meta charset="UTF-8"/>
 <meta http-equiv="Content-Security-Policy" content="${csp}"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
   :root {
-    --tile-bg: var(--vscode-welcomePage-tileBackground, var(--vscode-editorWidget-background, var(--vscode-sideBar-background)));
+    --tile-bg: var(--vscode-welcomePage-tileBackground, var(--vscode-sideBar-background));
     --tile-hover: var(--vscode-welcomePage-tileHoverBackground, var(--vscode-list-hoverBackground));
     --tile-border: var(--vscode-welcomePage-tileBorder, var(--vscode-widget-border, var(--vscode-panel-border)));
-    --muted: var(--vscode-descriptionForeground, color-mix(in srgb, var(--vscode-foreground) 65%, transparent));
   }
-  * { box-sizing: border-box; }
   html, body {
     margin: 0;
-    padding: 0;
     color: var(--vscode-foreground);
-    font-family: var(--vscode-font-family);
-    font-size: 13px;
+    font: 13px/1.5 var(--vscode-font-family);
     background: transparent;
-    line-height: 1.5;
   }
-  .wrap {
-    padding: 8px 10px 6px;
-  }
-  .tiles {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
+  .wrap { padding: 8px 10px 6px; }
   .tile {
-    appearance: none;
+    display: block;
     width: 100%;
+    margin: 0 0 8px;
+    padding: 12px;
     text-align: left;
     font: inherit;
     color: inherit;
@@ -109,75 +65,38 @@ function getHtml(webview) {
     border: 1px solid var(--tile-border);
     background: var(--tile-bg);
     border-radius: 6px;
-    padding: 12px 12px 13px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    transition: background .12s ease, border-color .12s ease, border-radius .12s ease;
   }
-  .tile:hover {
-    background: var(--tile-hover);
-    border-color: var(--vscode-focusBorder, var(--tile-border));
-  }
-  .tile:focus-visible {
-    outline: 1px solid var(--vscode-focusBorder);
-    outline-offset: 1px;
-  }
-  .tile-title {
-    font-weight: 600;
-    font-size: 13px;
-    line-height: 1.3;
-  }
-  .tile-desc {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.4;
-  }
+  .tile:last-child { margin-bottom: 0; }
+  .tile:hover { background: var(--tile-hover); }
+  .tile:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+  .tile b { display: block; margin-bottom: 4px; }
+  .tile span { color: var(--vscode-descriptionForeground); font-size: 12px; }
   ${modernUiSharedCss()}
   body.modern-ui {
     --tile-bg: var(--vscode-surface-background, var(--tile-bg));
     --tile-border: var(--sf-border, var(--tile-border));
   }
-  body.modern-ui .wrap {
-    padding: var(--sf-pad-y, 10px) var(--vscode-spacing-size100, 10px) var(--vscode-spacing-size60, 6px);
-  }
-  body.modern-ui .tiles {
-    gap: var(--sf-gap, 8px);
-  }
-  body.modern-ui .tile {
-    border-radius: var(--sf-r-surface, 8px);
-    border-width: var(--sf-stroke, 1px);
-    padding: var(--vscode-spacing-size120, 12px);
-    gap: var(--vscode-spacing-size40, 4px);
-  }
+  body.modern-ui .wrap { padding: 10px; }
+  body.modern-ui .tile { border-radius: var(--sf-r-surface, 8px); }
 </style>
 </head>
 <body class="${modernUiBodyClass()}">
   <div class="wrap">
-    <div class="tiles">
-      <button class="tile" id="btnSearch" type="button">
-        <div class="tile-title">${L.search}</div>
-        <div class="tile-desc">${L.searchDesc}</div>
-      </button>
-      <button class="tile" id="btnReplace" type="button">
-        <div class="tile-title">${L.replace}</div>
-        <div class="tile-desc">${L.replaceDesc}</div>
-      </button>
-    </div>
+    <button class="tile" id="search" type="button">
+      <b>Fullscreen Search</b>
+      <span>${searchHint}</span>
+    </button>
+    <button class="tile" id="replace" type="button">
+      <b>Fullscreen Replace</b>
+      <span>${replaceHint}</span>
+    </button>
   </div>
 <script>
   const vscode = acquireVsCodeApi();
-  document.getElementById("btnSearch").addEventListener("click", () => {
-    vscode.postMessage({ type: "fullscreenSearch" });
-  });
-  document.getElementById("btnReplace").addEventListener("click", () => {
-    vscode.postMessage({ type: "fullscreenReplace" });
-  });
-  window.addEventListener("message", (event) => {
-    const msg = event.data;
-    if (msg && msg.type === "modernUi") {
-      document.body.classList.toggle("modern-ui", !!msg.enabled);
-    }
+  document.getElementById("search").onclick = () => vscode.postMessage({ type: "fullscreenSearch" });
+  document.getElementById("replace").onclick = () => vscode.postMessage({ type: "fullscreenReplace" });
+  window.addEventListener("message", (e) => {
+    if (e.data?.type === "modernUi") document.body.classList.toggle("modern-ui", !!e.data.enabled);
   });
 </script>
 </body>
