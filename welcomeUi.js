@@ -459,7 +459,5 @@ function escapeHtml(text) {
 
 module.exports = {
   openWelcomePage,
-  maybeShowWelcomeOnStartup,
-  WELCOME_VERSION_KEY,
-  WELCOME_STATE_KEY
+  maybeShowWelcomeOnStartup
 };

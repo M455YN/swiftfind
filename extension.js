@@ -7,10 +7,6 @@ const { initPathIndexWatchers, patchPathIndexFromFs, flushPathIndexCache, rebuil
 const { openWelcomePage, maybeShowWelcomeOnStartup } = require("./welcomeUi");
 const { registerSidebarActions } = require("./sidebarActionsUi");
 
-/**
- * @param {vscode.FileCreateEvent | vscode.FileDeleteEvent} e
- * @param {"created" | "deleted"} kind
- */
 function onFilesMutated(e, kind) {
   const uris = Array.isArray(e?.files) ? e.files : [];
   if (kind === "deleted") {
@@ -18,7 +14,6 @@ function onFilesMutated(e, kind) {
     markDirty();
     return;
   }
-  // Skip empty directory creates — only index real files.
   Promise.all(
     uris.map(async (uri) => {
       try {
@@ -35,19 +30,12 @@ function onFilesMutated(e, kind) {
   });
 }
 
-/**
- * @param {vscode.FileRenameEvent} e
- */
 function onFilesRenamed(e) {
   patchPathIndexFromFs({ renamed: e?.files || [] });
   markDirty();
 }
 
-/**
- * Relative workspace path for Explorer context menu URI.
- * @param {vscode.Uri | undefined} uri
- * @param {vscode.Uri[] | undefined} uris
- */
+/** Relative workspace path for Explorer context menu URI. */
 function scopePathFromExplorerArgs(uri, uris) {
   const target = uri || (Array.isArray(uris) ? uris[0] : undefined);
   if (!target || target.scheme === "untitled") return "";

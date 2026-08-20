@@ -29,30 +29,60 @@ const TAB_LABELS = {
   symbols: () => t("Symbols", "Symbole"),
   commands: () => t("Commands", "Polecenia")
 };
-const OPTION_KEYS = {
-  "case-sensitive": "matchCase",
-  "whole-word": "wholeWord",
-  regex: "useRegex",
-  fuzzy: "fuzzy",
-  "exclude-git": "excludeGitIgnored",
-  "exclude-searchignore": "excludeSearchIgnored"
-};
-const OPTION_BUTTON_KEYS = {
-  matchCase: "case-sensitive",
-  wholeWord: "whole-word",
-  useRegex: "regex",
-  fuzzy: "fuzzy",
-  excludeGitIgnored: "exclude-git",
-  excludeSearchIgnored: "exclude-searchignore"
-};
-const OPTION_META = {
-  matchCase: { icon: "case-sensitive", label: () => t("Match Case", "Uwzgledniaj wielkosc liter"), shortcut: "Alt+C" },
-  wholeWord: { icon: "whole-word", label: () => t("Match Whole Word", "Dopasuj cale slowo"), shortcut: "Alt+W" },
-  useRegex: { icon: "regex", label: () => t("Use Regular Expression", "Uzyj wyrazenia regularnego"), shortcut: "Alt+R" },
-  fuzzy: { icon: "sparkle", label: () => t("Fuzzy Search", "Wyszukiwanie fuzzy"), shortcut: "Alt+F" },
-  excludeGitIgnored: { icon: "repo", label: () => t("Exclude Git Ignored", "Pomin pliki ignorowane przez Git"), shortcut: "Alt+G" },
-  excludeSearchIgnored: { icon: "filter", label: () => t("Exclude Search Ignored", "Pomin pliki z .searchignore"), shortcut: "Alt+S" }
-};
+const OPTIONS = [
+  {
+    id: "matchCase",
+    buttonKey: "case-sensitive",
+    icon: "case-sensitive",
+    label: () => t("Match Case", "Uwzgledniaj wielkosc liter"),
+    shortcut: "Alt+C",
+    aliases: ["matchCase"]
+  },
+  {
+    id: "wholeWord",
+    buttonKey: "whole-word",
+    icon: "whole-word",
+    label: () => t("Match Whole Word", "Dopasuj cale slowo"),
+    shortcut: "Alt+W",
+    aliases: ["wholeWord"]
+  },
+  {
+    id: "useRegex",
+    buttonKey: "regex",
+    icon: "regex",
+    label: () => t("Use Regular Expression", "Uzyj wyrazenia regularnego"),
+    shortcut: "Alt+R",
+    aliases: ["regex"]
+  },
+  {
+    id: "fuzzy",
+    buttonKey: "fuzzy",
+    icon: "sparkle",
+    label: () => t("Fuzzy Search", "Wyszukiwanie fuzzy"),
+    shortcut: "Alt+F",
+    aliases: ["fuzzy"]
+  },
+  {
+    id: "excludeGitIgnored",
+    buttonKey: "exclude-git",
+    icon: "repo",
+    label: () => t("Exclude Git Ignored", "Pomin pliki ignorowane przez Git"),
+    shortcut: "Alt+G",
+    aliases: ["excludeGit"]
+  },
+  {
+    id: "excludeSearchIgnored",
+    buttonKey: "exclude-searchignore",
+    icon: "filter",
+    label: () => t("Exclude Search Ignored", "Pomin pliki z .searchignore"),
+    shortcut: "Alt+S",
+    aliases: ["excludeSearchIgnore"]
+  }
+];
+const OPTION_BY_BUTTON = Object.fromEntries(OPTIONS.map((o) => [o.buttonKey, o.id]));
+const OPTION_BY_ALIAS = Object.fromEntries(
+  OPTIONS.flatMap((o) => [...o.aliases, o.id].map((alias) => [alias, o.id]))
+);
 
 function markDirty() {
   documentUpdated = true;
@@ -96,13 +126,13 @@ function buildButtons() {
   const tabButtons = TABS.map((tab) =>
     btn(`tab-${tab}`, tab === "files" ? "file" : tab === "folders" ? "folder" : tab === "text" ? "symbol-text" : tab === "symbols" ? "symbol-class" : "terminal", TAB_LABELS[tab](), titleLocation, activeTab === tab)
   );
-  const optionButtons = Object.entries(OPTION_META).map(([key, meta]) =>
+  const optionButtons = OPTIONS.map((opt) =>
     btn(
-      OPTION_BUTTON_KEYS[key],
-      meta.icon,
-      `${meta.label()} (${meta.shortcut}): ${searchOptions[key] ? "ON" : "OFF"}`,
+      opt.buttonKey,
+      opt.icon,
+      `${opt.label()} (${opt.shortcut}): ${searchOptions[opt.id] ? "ON" : "OFF"}`,
       inlineLocation,
-      searchOptions[key]
+      searchOptions[opt.id]
     )
   );
   return [
@@ -245,8 +275,9 @@ function openQuickSearch() {
       await refreshSearch(quickPick, updateItems, quickPick.value);
       return;
     }
-    if (OPTION_KEYS[key]) {
-      searchOptions[OPTION_KEYS[key]] = !searchOptions[OPTION_KEYS[key]];
+    const optId = OPTION_BY_BUTTON[key];
+    if (optId) {
+      searchOptions[optId] = !searchOptions[optId];
       quickPick.buttons = buildButtons();
       await refreshSearch(quickPick, updateItems, quickPick.value);
       return;
@@ -276,15 +307,7 @@ function shiftTab(step) {
 }
 
 function toggleOption(key) {
-  const map = {
-    matchCase: "matchCase",
-    wholeWord: "wholeWord",
-    regex: "useRegex",
-    fuzzy: "fuzzy",
-    excludeGit: "excludeGitIgnored",
-    excludeSearchIgnore: "excludeSearchIgnored"
-  };
-  const opt = map[key];
+  const opt = OPTION_BY_ALIAS[key];
   if (opt) searchOptions[opt] = !searchOptions[opt];
   refreshActiveQuickPick();
 }

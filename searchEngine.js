@@ -161,13 +161,6 @@ function mergeOptions(options) {
   return opts;
 }
 
-function quoteArg(arg) {
-  if (process.platform === "win32") {
-    return `"${String(arg).replace(/"/g, '\\"')}"`;
-  }
-  return `'${String(arg).replace(/'/g, "'\\''")}'`;
-}
-
 function normalizeScopePath(scopePath) {
   return String(scopePath || "").replaceAll("\\", "/").replace(/^\.\/+/, "").trim();
 }
@@ -209,7 +202,6 @@ function parseSearchLine(line, rootPath, withColumn) {
 }
 
 const parseRipgrepLine = (line, rootPath) => parseSearchLine(line, rootPath, true);
-const parseFindstrLine = (line, rootPath) => parseSearchLine(line, rootPath, false);
 
 function fuzzyScore(text, pattern) {
   if (!pattern) return 0;
@@ -671,23 +663,6 @@ function buildRegex(query, options, global = false) {
   }
 }
 
-function buildFindstrPattern(query, options) {
-  if (options.useRegex) {
-    return options.wholeWord ? `\\<${query}\\>` : query;
-  }
-  const safe = query.replace(/[.^$*+?()[\]{}|\\]/g, "\\$&");
-  return options.wholeWord ? `\\<${safe}\\>` : query;
-}
-
-function workspacePatterns(rootPath, scopePath) {
-  const scope = normalizeScopePath(scopePath);
-  const include = new vscode.RelativePattern(
-    rootPath,
-    scope ? (scope.includes(".") ? scope : `${scope}/**/*`) : "**/*"
-  );
-  return { include, exclude: findFilesExcludePattern(rootPath) };
-}
-
 async function getBundledRipgrepPath() {
   const exeName = process.platform === "win32" ? "rg.exe" : "rg";
   const appRoot = vscode.env.appRoot;
@@ -711,13 +686,8 @@ function rgThreadCount() {
   return String(Math.min(8, Math.max(2, cpus)));
 }
 
-/**
- * Files to search for text: the path-index cache (already gitignore-filtered).
- * @param {Record<string, unknown>=} options
- * @returns {Promise<string[]>}
- */
 async function getSearchFileList(options) {
-  await getIndexedPaths(options?.excludeGitIgnored !== false);
+  await getIndexedPaths();
   const scope = normalizeScopePath(options?.scopePath);
   const files = pathIndex.files;
   if (!files.length) return [];
@@ -1256,7 +1226,7 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
     else await new Promise((r) => setTimeout(r, 0));
   };
   const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
-  await getIndexedPaths(options?.excludeGitIgnored !== false);
+  await getIndexedPaths();
   if (isCancelled()) {
     onBatch({ items: [], done: true, total: 0, stopped: true });
     return [];
@@ -1353,37 +1323,6 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
   return items;
 }
 
-function searchWithBundledRg(rootPath, query, cfg, options, files) {
-  return runRipgrep(rootPath, query, options, false, files).then((items) =>
-    items ? items.slice(0, cfg.maxResults) : null
-  );
-}
-
-function lineMatchesFind(src, query, options) {
-  const regex = buildRegex(query, {
-    matchCase: Boolean(options.matchCase),
-    wholeWord: Boolean(options.wholeWord),
-    useRegex: Boolean(options.useRegex)
-  });
-  return Boolean(regex?.exec(src));
-}
-
-async function scanFilesForMatches(rootPath, query, options, onMatch) {
-  const files = await getSearchFileList(options);
-  for (const rel of files) {
-    const abs = path.join(rootPath, rel);
-    let content;
-    try {
-      const stat = await fs.stat(abs);
-      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
-      content = await fs.readFile(abs, "utf8");
-    } catch {
-      continue;
-    }
-    onMatch(normalizeRelPath(abs, rootPath), content.split(/\r?\n/));
-  }
-}
-
 async function fallbackSearch(rootPath, query, maxResults, options, filesOpt) {
   const matchCase = Boolean(options?.matchCase);
   const wholeWord = Boolean(options?.wholeWord);
@@ -1429,50 +1368,32 @@ async function fallbackSearch(rootPath, query, maxResults, options, filesOpt) {
   return out;
 }
 
-function search(text, options) {
-  return new Promise(async (resolve, reject) => {
-    if (!text || text.trim().length <= 1) {
-      resolve([]);
-      return;
-    }
-    const rootPath = getRootPath();
-    if (!rootPath) {
-      resolve([]);
-      return;
-    }
+async function search(text, options) {
+  if (!text || text.trim().length <= 1) return [];
+  const rootPath = getRootPath();
+  if (!rootPath) return [];
 
-    await loadGitIgnoreRules(rootPath);
-    const cfg = getConfig();
-    const opts = mergeOptions(options);
-    const q = text.trim();
-    const noResults = [{ label: t("No results found", "Brak wynikow"), alwaysShow: true }];
-    const timeoutMsg = [
-      { label: t("Search timeout (narrow query)", "Przekroczono czas wyszukiwania (zawęź frazę)"), alwaysShow: true }
-    ];
-    const files = await getSearchFileList(opts);
-    if (!files.length) {
-      resolve(noResults);
-      return;
-    }
+  await loadGitIgnoreRules(rootPath);
+  const cfg = getConfig();
+  const opts = mergeOptions(options);
+  const q = text.trim();
+  const noResults = [{ label: t("No results found", "Brak wynikow"), alwaysShow: true }];
+  const timeoutMsg = [
+    { label: t("Search timeout (narrow query)", "Przekroczono czas wyszukiwania (zawęź frazę)"), alwaysShow: true }
+  ];
+  const files = await getSearchFileList(opts);
+  if (!files.length) return noResults;
 
-    const finishFallback = (items, empty) =>
-      resolve(items.length ? items : empty || noResults);
-
-    searchWithBundledRg(rootPath, q, cfg, opts, files).then((rgItems) => {
-      if (rgItems?.length) {
-        resolve(rgItems);
-        return;
-      }
-      if (rgItems && !rgItems.length) {
-        resolve(noResults);
-        return;
-      }
-      // rg unavailable — JS scan over the same indexed file list.
-      fallbackSearch(rootPath, q, cfg.maxResults, opts, files)
-        .then((items) => finishFallback(items, timeoutMsg))
-        .catch(() => reject(new Error("Search failed.")));
-    });
-  });
+  const rgItems = await runRipgrep(rootPath, q, opts, false, files);
+  if (rgItems) {
+    return rgItems.length ? rgItems.slice(0, cfg.maxResults) : noResults;
+  }
+  try {
+    const items = await fallbackSearch(rootPath, q, cfg.maxResults, opts, files);
+    return items.length ? items : timeoutMsg;
+  } catch {
+    throw new Error("Search failed.");
+  }
 }
 
 function rankFuzzy(rows, limit) {
@@ -2117,14 +2038,8 @@ async function rebuildPathIndex(rootPath, excludeGitIgnored) {
   return files.length;
 }
 
-/**
- * Cached workspace path list. Rebuilds when dirty, root changes, ignore mode
- * flips, or git HEAD (branch/checkout) differs from the indexed snapshot.
- * Loads `.vscode/swiftfind-path-index.cache` when memory is empty.
- * Always applies workspace `.gitignore` (in addition to excludeGlobs).
- * @returns {Promise<{ files: string[], folders: string[], rebuilt: boolean, count: number }>}
- */
-async function getIndexedPaths(excludeGitIgnored = true) {
+/** Cached workspace path list (always applies .gitignore + excludeGlobs). */
+async function getIndexedPaths() {
   const rootPath = getRootPath();
   if (!rootPath) return { files: [], folders: [], rebuilt: false, count: 0 };
 
@@ -2132,8 +2047,7 @@ async function getIndexedPaths(excludeGitIgnored = true) {
   const globsKey = excludeGlobsKey();
   await loadGitIgnoreRules(rootPath);
   const gitignoreKey = gitIgnoreCache.key;
-  const mode = true; // always honor .gitignore
-  void excludeGitIgnored;
+  const mode = true;
   const needsRebuild =
     pathIndex.dirty ||
     pathIndex.rootPath !== rootPath ||
@@ -2242,7 +2156,7 @@ async function warmPathIndex(reason = "startup") {
   }
 
   if (!INDEX_TOAST_REASONS.has(reason)) {
-    await getIndexedPaths(true);
+    await getIndexedPaths();
     return;
   }
 
@@ -2256,7 +2170,7 @@ async function warmPathIndex(reason = "startup") {
       progress.report({
         message: t("Rebuilding file index…", "Odbudowa indeksu plików…")
       });
-      const result = await getIndexedPaths(true);
+      const result = await getIndexedPaths();
       if (!result.rebuilt) return;
       progress.report({
         message: t(`Indexed ${result.count} files`, `Zaindeksowano ${result.count} plików`)
@@ -2353,7 +2267,7 @@ function initPathIndexWatchers(context, hooks) {
 
 async function searchFiles(query, limit, options) {
   if (!query) return [];
-  await getIndexedPaths(options?.excludeGitIgnored !== false);
+  await getIndexedPaths();
   const fuzzy = Boolean(options?.fuzzy);
   const needle = query.toLowerCase();
   const cap = Math.max(1, Number(limit) || 1);
@@ -2398,7 +2312,7 @@ async function searchFiles(query, limit, options) {
 
 async function searchFolders(query, limit, options) {
   if (!query) return [];
-  await getIndexedPaths(options?.excludeGitIgnored !== false);
+  await getIndexedPaths();
   const fuzzy = Boolean(options?.fuzzy);
   const needle = query.toLowerCase();
   const cap = Math.max(1, Number(limit) || 1);
@@ -2602,18 +2516,6 @@ async function searchByTabStreaming(tab, query, options, hooks = {}) {
   return items;
 }
 
-function mergeUniqueResults(primary, secondary) {
-  const out = [];
-  const seen = new Set();
-  for (const item of [...primary, ...secondary]) {
-    const key = `${item.filePath || ""}:${item.lineNumber || 0}:${item.column || 0}:${item.detail || ""}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
-  }
-  return out;
-}
-
 function replaceInString(text, findQuery, replaceStr, options) {
   const re = buildRegex(findQuery, options, true);
   if (!re) return { newText: text, count: 0, error: "invalid_pattern" };
@@ -2672,16 +2574,32 @@ function collectReplacePreviews(text, findQuery, replaceStr, options, maxPreview
 }
 
 async function fallbackListFilesContainingText(rootPath, query, options) {
+  const regex = buildRegex(query, {
+    matchCase: Boolean(options.matchCase),
+    wholeWord: Boolean(options.wholeWord),
+    useRegex: Boolean(options.useRegex)
+  });
+  if (!regex) return [];
   /** @type {Set<string>} */
   const matched = new Set();
-  await scanFilesForMatches(rootPath, query, options, (filePath, lines) => {
-    for (const line of lines) {
-      if (lineMatchesFind(line, query, options)) {
-        matched.add(filePath);
+  const files = await getSearchFileList(options);
+  for (const rel of files) {
+    const abs = path.join(rootPath, rel);
+    let content;
+    try {
+      const stat = await fs.stat(abs);
+      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
+      content = await fs.readFile(abs, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of content.split(/\r?\n/)) {
+      if (regex.test(line)) {
+        matched.add(normalizeRelPath(abs, rootPath));
         break;
       }
     }
-  });
+  }
   return [...matched];
 }
 
@@ -2853,11 +2771,8 @@ module.exports = {
   createSearchController,
   previewReplace,
   replaceAllInScope,
-  replaceInString,
-  invalidatePathIndex,
   patchPathIndexFromFs,
   flushPathIndexCache,
   rebuildPathIndexCache,
-  warmPathIndex,
   initPathIndexWatchers
 };

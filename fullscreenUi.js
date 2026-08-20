@@ -62,6 +62,15 @@ function optionsFromMessage(msg) {
   };
 }
 
+function openPayloadFromMessage(msg) {
+  return {
+    filePath: msg.filePath,
+    lineNumber: Number(msg.lineNumber || 1),
+    column: Number(msg.column || 1),
+    matchLength: Number(msg.matchLength || 0)
+  };
+}
+
 function wireFullscreenMessages(panel) {
   panel.webview.onDidReceiveMessage(async (msg) => {
     if (!msg || !msg.type) return;
@@ -89,15 +98,7 @@ function wireFullscreenMessages(panel) {
       const tab = String(msg.tab || "text");
       panel.webview.postMessage({ type: "searchStarted", requestId: reqId, tab, query: q });
       try {
-        const opts = {
-          matchCase: Boolean(msg.matchCase),
-          wholeWord: Boolean(msg.wholeWord),
-          useRegex: Boolean(msg.useRegex),
-          fuzzy: Boolean(msg.fuzzy),
-          excludeGitIgnored: Boolean(msg.excludeGitIgnored),
-          excludeSearchIgnored: Boolean(msg.excludeSearchIgnored),
-          scopePath: String(msg.scopePath || "")
-        };
+        const opts = optionsFromMessage(msg);
         await searchByTabStreaming(tab, q, opts, {
           controller,
           isCancelled: () =>
@@ -131,15 +132,7 @@ function wireFullscreenMessages(panel) {
 
     if (msg.type === "select") {
       if (msg.commandId) return;
-      await openResult(
-        {
-          filePath: msg.filePath,
-          lineNumber: Number(msg.lineNumber || 1),
-          column: Number(msg.column || 1),
-          matchLength: Number(msg.matchLength || 0)
-        },
-        getConfig().preview
-      );
+      await openResult(openPayloadFromMessage(msg), getConfig().preview);
       return;
     }
 
@@ -148,15 +141,7 @@ function wireFullscreenMessages(panel) {
         await vscode.commands.executeCommand(String(msg.commandId));
         return;
       }
-      await openResult(
-        {
-          filePath: msg.filePath,
-          lineNumber: Number(msg.lineNumber || 1),
-          column: Number(msg.column || 1),
-          matchLength: Number(msg.matchLength || 0)
-        },
-        false
-      );
+      await openResult(openPayloadFromMessage(msg), false);
       return;
     }
 

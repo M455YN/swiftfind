@@ -1,14 +1,12 @@
 const vscode = require("vscode");
-const path = require("path");
+
 class TaskRunnerNode extends vscode.TreeItem {
   /**
-   * @param {string} rootPath
    * @param {vscode.Task} task
    * @param {string | undefined} tasksFilePath
    */
-  constructor(rootPath, task, tasksFilePath) {
+  constructor(task, tasksFilePath) {
     super(task.name, vscode.TreeItemCollapsibleState.None);
-    this.rootPath = rootPath;
     this.taskName = task.name;
     this.taskScope = task.scope;
     this.tasksFilePath = tasksFilePath;
@@ -117,7 +115,7 @@ class TasksExplorerProvider {
 
     return runnable
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((task) => new TaskRunnerNode(this.rootPath, task, labelToFile.get(task.name)));
+      .map((task) => new TaskRunnerNode(task, labelToFile.get(task.name)));
   }
 }
 
