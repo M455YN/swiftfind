@@ -9,7 +9,7 @@ Default shortcuts:
 - Floating search: `Ctrl+Alt+Shift+Space`
 - Fullscreen search: `Ctrl+Alt+Shift+F`
 - Find and replace: `Ctrl+Alt+Shift+H`
-- Replace in editor: `Ctrl+Alt+Shift+R`
+- Replace in editor: `Ctrl+Alt+Shift+R` (editor must be focused)
 
 Polish / AltGr-safe fallback (chord):
 
@@ -29,7 +29,7 @@ Rebind everything in Keyboard Shortcuts. The status bar `SwiftFind` item opens s
 
 ## Fullscreen search and replace
 
-`Ctrl+Alt+Shift+F` opens the fullscreen panel. Find is primary; expand the Replace row (or use `Ctrl+Alt+Shift+H`) to run find-and-replace across workspace files.
+`Ctrl+Alt+Shift+F` opens the fullscreen panel. Find is primary; expand the Replace row (or use `Ctrl+Alt+Shift+H`) to run find-and-replace across workspace files (up to 500 files at once; narrow with **Folder…** if you hit the limit).
 
 - **Text** results group as folder → file → match, with inline highlight preview (`swiftFind.preview`).
 - **Pause / Resume / Stop** control a running ripgrep scan.
@@ -49,6 +49,8 @@ In Explorer, **Search Here** and **Replace Here** scope fullscreen search or rep
 SwiftFind keeps a workspace file list in `.vscode/swiftfind-path-index.cache`. It always honors `.gitignore`, plus common folders such as `bin` / `obj`. **Text** search and replace scan only that list, so they stay in sync with the Files tab.
 
 Rebuild anytime from the Command Palette: **SwiftFind: Rebuild File Index Cache**.
+
+Add `.vscode/swiftfind-path-index.cache*` to your project's `.gitignore` so the cache is not committed.
 
 ## Search options (while the modal is open)
 

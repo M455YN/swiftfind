@@ -8,3 +8,4 @@ mcps/**
 **/*.map
 **/.DS_Store
 **/Thumbs.db
+test/**

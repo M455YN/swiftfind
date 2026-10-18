@@ -32,16 +32,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:swiftFind.openReplace",
-    "onCommand:swiftFind.replaceInEditor",
-    "onCommand:swiftFind.open",
-    "onCommand:swiftFind.showWelcome",
-    "onCommand:swiftFind.rebuildIndex",
-    "onCommand:swiftFind.explorer.searchHere",
-    "onCommand:swiftFind.explorer.replaceHere",
-    "onView:swiftFind.tasksExplorer",
-    "onView:swiftFind.sidebarActions"
+    "onStartupFinished"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -375,6 +366,6 @@
   },
   "scripts": {
     "lint": "echo \"No linter configured\"",
-    "test": "echo \"No tests configured\""
+    "test": "node --test test/*.test.js"
   }
 }

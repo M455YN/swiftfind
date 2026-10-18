@@ -299,7 +299,7 @@ async function openFullscreenSearch(payload) {
   fullscreenPanel = panel;
   searchSeq = 0;
   activeSearchController = null;
-  panel.webview.html = getHtml(query || "", options, { replace, showReplace });
+  panel.webview.html = getHtml(query || "", options, { replace, showReplace }, panel.webview.cspSource);
   wireFullscreenMessages(panel);
 
   panel.onDidDispose(() => {
@@ -318,7 +318,8 @@ async function openFullscreenSearch(payload) {
   }, 30);
 }
 
-function getHtml(initialQuery, initialOptions, extras = {}) {
+function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
+  const nonce = require("crypto").randomBytes(16).toString("hex");
   const initialReplace = String(extras.replace || "");
   const initialShowReplace = Boolean(extras.showReplace);
   const pl = isPolish();
@@ -372,6 +373,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${cspSource} data:" />
   <style>
     :root {
       --sf-border: var(--vscode-panel-border, rgba(127,127,127,.35));
@@ -1143,7 +1145,7 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
   <div id="summary"></div>
   <div id="out"></div>
   <div id="ctx" class="ctx"><button id="ctxReveal">${pl ? "Pokaż w Eksploratorze Windows" : "Show in Windows Explorer"}</button></div>
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const q = document.getElementById("q");
     const go = document.getElementById("go");
@@ -1960,7 +1962,8 @@ function getHtml(initialQuery, initialOptions, extras = {}) {
         .replaceAll("&","&amp;")
         .replaceAll("<","&lt;")
         .replaceAll(">","&gt;")
-        .replaceAll('"',"&quot;");
+        .replaceAll('"',"&quot;")
+        .replaceAll("'","&#39;");
     }
     refreshScopeInfo();
     refreshQueryPlaceholder();

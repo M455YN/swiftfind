@@ -4,6 +4,7 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs/promises");
 const { t } = require("./i18n");
+const { buildRegex, replaceInString, collectReplacePreviews } = require("./replaceEngine");
 
 /**
  * @typedef {vscode.QuickPickItem & {
@@ -647,20 +648,6 @@ function applyScope(items, scopePath) {
   const scope = normalizeScopePath(scopePath);
   if (!scope) return items;
   return items.filter((it) => pathInScope(it.filePath || it.description, scope));
-}
-
-function escapeRegex(text) {
-  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildRegex(query, options, global = false) {
-  try {
-    const source = options.useRegex ? query : escapeRegex(query);
-    const bounded = options.wholeWord ? `\\b(?:${source})\\b` : source;
-    return new RegExp(bounded, `${options.matchCase ? "" : "i"}${global ? "g" : ""}`);
-  } catch {
-    return null;
-  }
 }
 
 async function getBundledRipgrepPath() {
@@ -2502,63 +2489,6 @@ async function searchByTabStreaming(tab, query, options, hooks = {}) {
   return items;
 }
 
-function replaceInString(text, findQuery, replaceStr, options) {
-  const re = buildRegex(findQuery, options, true);
-  if (!re) return { newText: text, count: 0, error: "invalid_pattern" };
-  const matches = text.match(re);
-  const count = matches ? matches.length : 0;
-  if (!count) return { newText: text, count: 0 };
-  return { newText: text.replace(re, replaceStr ?? ""), count };
-}
-
-/**
- * Collect per-match line previews for Replace UI (Rider-style tree).
- * @returns {{ count: number, previews: Array<{lineNumber:number, column:number, before:string, after:string, matchLength:number}>, error?: string }}
- */
-function collectReplacePreviews(text, findQuery, replaceStr, options, maxPreviews) {
-  const re = buildRegex(findQuery, options, true);
-  if (!re) return { count: 0, previews: [], error: "invalid_pattern" };
-  const localRe = buildRegex(findQuery, options, false);
-  const limit = Math.max(0, Number(maxPreviews) || 0);
-  /** @type {Array<{lineNumber:number, column:number, before:string, after:string, matchLength:number}>} */
-  const previews = [];
-  let count = 0;
-  let match = re.exec(text);
-  while (match) {
-    count += 1;
-    if (previews.length < limit) {
-      const idx = match.index;
-      const beforeChunk = text.slice(0, idx);
-      const lineNumber = beforeChunk.split(/\r?\n/).length;
-      const nl = Math.max(beforeChunk.lastIndexOf("\n"), beforeChunk.lastIndexOf("\r"));
-      const lineStart = nl + 1;
-      let lineEnd = text.indexOf("\n", idx);
-      if (lineEnd < 0) lineEnd = text.length;
-      if (lineEnd > 0 && text[lineEnd - 1] === "\r") lineEnd -= 1;
-      const line = text.slice(lineStart, lineEnd);
-      const column = idx - lineStart + 1;
-      const matchLength = match[0].length;
-      let replacedMatch = replaceStr ?? "";
-      if (localRe) {
-        try {
-          replacedMatch = match[0].replace(localRe, replaceStr ?? "");
-        } catch {
-          replacedMatch = replaceStr ?? "";
-        }
-      }
-      const after =
-        line.slice(0, Math.max(0, column - 1)) + replacedMatch + line.slice(Math.max(0, column - 1) + matchLength);
-      previews.push({ lineNumber, column, before: line, after, matchLength });
-    }
-    if (!re.global) break;
-    if (match[0].length === 0) {
-      re.lastIndex += 1;
-    }
-    match = re.exec(text);
-  }
-  return { count, previews };
-}
-
 async function fallbackListFilesContainingText(rootPath, query, options) {
   const regex = buildRegex(query, {
     matchCase: Boolean(options.matchCase),
@@ -2687,12 +2617,24 @@ async function previewReplace(find, replace, options) {
   return { ok: true, files: filesWithHits, occurrences, samples };
 }
 
+// Every file is opened as a document before the edit, so keep the batch bounded.
+const MAX_REPLACE_FILES = 500;
+
 async function replaceAllInScope(find, replace, options) {
   const opts = mergeOptions(options);
   const check = validateReplace(find, opts);
   if (!check.ok) return check;
 
   const paths = await listFilesContainingText(check.findTrim, opts);
+  if (paths.length > MAX_REPLACE_FILES) {
+    return {
+      ok: false,
+      message: t(
+        `Too many files (${paths.length}, limit ${MAX_REPLACE_FILES}). Narrow the scope with Folder….`,
+        `Za duzo plikow (${paths.length}, limit ${MAX_REPLACE_FILES}). Zawez zakres przez Folder….`
+      )
+    };
+  }
   const edit = new vscode.WorkspaceEdit();
   let changedFiles = 0;
   let occurrences = 0;
