@@ -2,7 +2,7 @@
   "name": "swift-find",
   "displayName": "SwiftFind",
   "description": "Fast unified search for VS Code with tabs and rich filters.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "publisher": "M455YN",
   "author": {
     "name": "Mateusz Afelt"
@@ -301,11 +301,6 @@
           "type": "boolean",
           "default": true,
           "description": "%cfg.preview%"
-        },
-        "swiftFind.searchOnType": {
-          "type": "boolean",
-          "default": true,
-          "description": "%cfg.searchOnType%"
         },
         "swiftFind.excludeGlobs": {
           "type": "array",

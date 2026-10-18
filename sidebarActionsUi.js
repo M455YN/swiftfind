@@ -49,7 +49,7 @@ function sidebarHtml(webview) {
   html, body {
     margin: 0;
     color: var(--vscode-foreground);
-    font: 13px/1.5 var(--vscode-font-family);
+    font: var(--vscode-font-size, 13px)/1.5 var(--vscode-font-family);
     background: transparent;
   }
   .wrap { padding: 8px 10px 6px; }

@@ -76,11 +76,6 @@ function activate(context) {
   registerSidebarActions(context);
 
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("swiftFind.searchOnType")) {
-        pushFullscreenConfig();
-      }
-    }),
     watchModernUi((enabled) => {
       pushFullscreenConfig();
       pushWelcomeModernUi(enabled);

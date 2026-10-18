@@ -75,4 +75,21 @@ function collectReplacePreviews(text, findQuery, replaceStr, options, maxPreview
   return { count, previews };
 }
 
-module.exports = { escapeRegex, buildRegex, replaceInString, collectReplacePreviews };
+// Strict UTF-8 only: anything else (cp1250, UTF-16, binary) returns null so VS Code decodes it itself.
+// A leading BOM is dropped, as it is in the editor model.
+function decodeUtf8Strict(bytes) {
+  if (bytes.includes(0)) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+// Position of the end of text, with the same line splitting as a VS Code model.
+function endPosition(text) {
+  const lines = text.split(/\r\n|\r|\n/);
+  return { line: lines.length - 1, character: lines[lines.length - 1].length };
+}
+
+module.exports = { decodeUtf8Strict, endPosition, buildRegex, replaceInString, collectReplacePreviews };

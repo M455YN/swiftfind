@@ -34,7 +34,7 @@ Rebind everything in Keyboard Shortcuts. The status bar `SwiftFind` item opens s
 - **Text** results group as folder → file → match, with inline highlight preview (`swiftFind.preview`).
 - **Pause / Resume / Stop** control a running ripgrep scan.
 - **Folder…** limits the search to a directory inside the workspace.
-- Live search vs Enter-only is `swiftFind.searchOnType`.
+- Search runs on Enter (or the Search button), not on every keystroke.
 
 Replace in the current editor uses VS Code’s own Find/Replace widget (`Ctrl+Alt+Shift+R`).
 

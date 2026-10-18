@@ -29,6 +29,5 @@
   "cfg.maxResults": "Maximum number of search matches to return (50–100000).",
   "cfg.caseInsensitive": "Case-insensitive search mode.",
   "cfg.preview": "Preview file while moving through results.",
-  "cfg.searchOnType": "Search as you type. When off, search runs only after pressing Enter (or Search).",
   "cfg.excludeGlobs": "Glob patterns for files/folders skipped by SwiftFind (e.g. **/*.bin, **/*.dtbcache)."
 }

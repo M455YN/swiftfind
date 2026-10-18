@@ -8,5 +8,15 @@ function t(en, pl) {
   return isPolish() ? pl : en;
 }
 
-module.exports = { isPolish, t };
+// Also inlined into the fullscreen webview (via toString), so keep it free of outer references.
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+module.exports = { isPolish, t, escapeHtml };
 

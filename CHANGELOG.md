@@ -2,6 +2,16 @@
 
 All notable changes to the "SwiftFind" extension are documented in this file.
 
+## [1.0.5] - 2026-10-18
+
+- Fix: newer VS Code ships ripgrep as `@vscode/ripgrep-universal`; SwiftFind now finds it instead of falling back to slow Node scanning (about 12x faster text search on a 10k-file repo).
+- Fix: stop using `rg --files-from` (not in upstream ripgrep); `rg` walks the workspace with the same ignore rules and excludes as the file index.
+- Search now runs only on Enter / Search button; removed the `swiftFind.searchOnType` setting (every keystroke re-scanned the whole workspace).
+- Cleanup: QuickPick now uses the same search engine as the fullscreen panel (about 200 lines of duplicate code removed); one shared HTML escape (the search field value is now quote-escaped); removed unused icon files.
+- Replace reads plain UTF-8 files from disk instead of opening a document per file; other encodings still go through VS Code.
+- Plain-text replace inserts the replacement literally (`$&`, `$1` no longer expand); added unit tests.
+- Fullscreen webview now has a Content-Security-Policy; replace-all is limited to 500 files.
+
 ## [1.0.4] - 2026-08-20
 
 - Fullscreen search matches the VS Code Settings editor: rounded field on top, filter icons inside, text tabs below.

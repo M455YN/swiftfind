@@ -1,5 +1,5 @@
 const vscode = require("vscode");
-const { isPolish } = require("./i18n");
+const { isPolish, escapeHtml } = require("./i18n");
 const { modernUiBodyClass, modernUiSharedCss, isModernUiEnabled } = require("./modernUi");
 
 /** @type {vscode.WebviewPanel | null} */
@@ -233,7 +233,7 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
     body {
       margin: 0;
       font-family: var(--vscode-font-family);
-      font-size: 13px;
+      font-size: var(--vscode-font-size, 13px);
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
       line-height: 1.5;
@@ -312,7 +312,7 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
       outline: 1px solid var(--vscode-focusBorder);
       outline-offset: 1px;
     }
-    .tile-title { font-weight: 600; font-size: 13px; }
+    .tile-title { font-weight: 600; font-size: var(--vscode-font-size, 13px); }
     .tile-desc { color: var(--muted); font-size: 12px; line-height: 1.4; }
     .steps {
       display: flex;
@@ -490,14 +490,6 @@ function getWelcomeHtml(webview, extensionUri, meta = {}) {
   </script>
 </body>
 </html>`;
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 module.exports = {

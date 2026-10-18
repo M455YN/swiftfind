@@ -29,6 +29,5 @@
   "cfg.maxResults": "Maksymalna liczba wynikow wyszukiwania (50–100000).",
   "cfg.caseInsensitive": "Tryb wyszukiwania bez rozrozniania wielkosci liter.",
   "cfg.preview": "Podglad pliku podczas poruszania po wynikach.",
-  "cfg.searchOnType": "Szukaj podczas wpisywania. Gdy wylaczone — dopiero po Enter (lub przycisku Szukaj).",
   "cfg.excludeGlobs": "Wzorce glob plikow/folderow pomijanych przez SwiftFind (np. **/*.bin, **/*.dtbcache)."
 }

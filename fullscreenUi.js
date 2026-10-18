@@ -8,7 +8,7 @@ const {
   replaceAllInScope,
   getConfig
 } = require("./searchEngine");
-const { isPolish } = require("./i18n");
+const { isPolish, escapeHtml } = require("./i18n");
 const { markDirty } = require("./quickPickUi");
 const { isModernUiEnabled, modernUiBodyClass, modernUiSharedCss } = require("./modernUi");
 
@@ -98,6 +98,9 @@ function wireFullscreenMessages(panel) {
       const q = String(msg.query || "").trim();
       const tab = String(msg.tab || "text");
       panel.webview.postMessage({ type: "searchStarted", requestId: reqId, tab, query: q });
+      // Send only new items per batch; fall back to the full list if it is not append-only.
+      let sent = 0;
+      let lastSent = null;
       try {
         const opts = optionsFromMessage(msg);
         await searchByTabStreaming(tab, q, opts, {
@@ -106,9 +109,15 @@ function wireFullscreenMessages(panel) {
             reqId !== searchSeq || panel !== fullscreenPanel || controller.isCancelled(),
           onBatch: ({ items, done, total, stopped }) => {
             if (reqId !== searchSeq || panel !== fullscreenPanel) return;
+            const append = sent > 0 && items.length >= sent && items[sent - 1] === lastSent;
+            const offset = append ? sent : 0;
+            const delta = offset ? items.slice(offset) : items.slice();
+            sent = items.length;
+            lastSent = items[sent - 1];
             panel.webview.postMessage({
               type: done ? "results" : "resultsPartial",
-              items,
+              items: delta,
+              offset,
               tab,
               requestId: reqId,
               query: q,
@@ -331,7 +340,6 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     symbols: pl ? "Symbole" : "Symbols",
     commands: pl ? "Polecenia" : "Commands",
     search: pl ? "Szukaj" : "Search",
-    query: pl ? "Szukaj w projekcie…" : "Search in project…",
     noResults: pl ? "Brak wyników" : "No results found",
     matchCase: pl ? "Uwzględniaj wielkość liter (Alt+C)" : "Match Case (Alt+C)",
     wholeWord: pl ? "Całe słowa (Alt+W)" : "Words (Alt+W)",
@@ -352,7 +360,6 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     replaceAll: pl ? "Zamień wszystko" : "Replace All",
     searching: pl ? "Wyszukiwanie…" : "Searching…",
     replaceSearching: pl ? "Podgląd zamiany…" : "Building replace preview…",
-    typeToSearch: pl ? "Wpisz frazę — wyniki pojawią się na żywo." : "Type to search — results update live.",
     typeThenEnter: pl ? "Wpisz frazę i naciśnij Enter." : "Type a query, then press Enter.",
     foundSoFar: pl ? "znaleziono" : "found",
     pause: pl ? "Wstrzymaj" : "Pause",
@@ -360,14 +367,13 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     stop: pl ? "Zatrzymaj" : "Stop",
     paused: pl ? "Wstrzymane…" : "Paused…",
     stopped: pl ? "zatrzymano" : "stopped",
+    showMore: pl ? "Pokaż więcej" : "Show more",
     expandAll: pl ? "Rozwiń wszystko" : "Expand all",
     collapseAll: pl ? "Zwiń wszystko" : "Collapse all",
     filesWord: pl ? "plików" : "files",
     occurrences: pl ? "wystąpień" : "occurrences",
     settings: pl ? "Ustawienia SwiftFind" : "SwiftFind Settings"
   };
-  const searchOnType = getConfig().searchOnType !== false;
-  const queryPlaceholder = searchOnType ? L.query : L.typeThenEnter;
   return `<!doctype html>
 <html>
 <head>
@@ -376,7 +382,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${cspSource} data:" />
   <style>
     :root {
-      --sf-border: var(--vscode-panel-border, rgba(127,127,127,.35));
+      --sf-border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(127,127,127,.35)));
       --sf-muted: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
       --sf-hit: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 179, 8, .42));
       --sf-hit-border: var(--vscode-editor-findMatchBorder, rgba(234, 179, 8, .75));
@@ -390,7 +396,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       display: flex;
       flex-direction: column;
       font-family: var(--vscode-font-family);
-      font-size: 13px;
+      font-size: var(--vscode-font-size, 13px);
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
     }
@@ -500,6 +506,18 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       font-weight: 400;
       line-height: 18px;
     }
+    .show-more {
+      display: block;
+      margin: 8px 12px;
+      padding: 4px 12px;
+      border: 1px solid var(--vscode-button-border, transparent);
+      border-radius: 3px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      font: inherit;
+      cursor: pointer;
+    }
+    .show-more:hover { background: var(--vscode-button-secondaryHoverBackground); }
     .tab:hover { color: var(--vscode-foreground); }
     .tab.active {
       color: var(--vscode-foreground);
@@ -897,7 +915,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       background: var(--vscode-menu-background);
       color: var(--vscode-menu-foreground);
       border-radius: 4px;
-      box-shadow: 0 8px 18px rgba(0,0,0,.28);
+      box-shadow: 0 8px 18px var(--vscode-widget-shadow, rgba(0,0,0,.28));
       overflow: hidden;
       display: none;
     }
@@ -932,7 +950,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     body.modern-ui .chrome > .find-row { order: 1; }
     body.modern-ui .chrome > .tabs { order: 2; }
     body.modern-ui .title {
-      font-size: 13px;
+      font-size: var(--vscode-font-size, 13px);
       letter-spacing: 0;
     }
     body.modern-ui .tabs {
@@ -948,7 +966,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       margin: 0;
       padding: 5px 12px;
       border-radius: var(--sf-r-surface, 8px);
-      font-size: 13px;
+      font-size: var(--vscode-font-size, 13px);
     }
     body.modern-ui .tab:hover {
       color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
@@ -1039,7 +1057,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     body.modern-ui .ctx {
       border-radius: var(--sf-r-surface, 8px);
       border-color: var(--sf-border);
-      box-shadow: 0 12px 28px rgba(0,0,0,.28);
+      box-shadow: 0 12px 28px var(--vscode-widget-shadow, rgba(0,0,0,.28));
     }
     body.modern-ui #summary {
       padding: var(--vscode-spacing-size80, 8px) var(--sf-pad-x, 16px);
@@ -1093,7 +1111,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     </div>
     <div class="find-row">
       <div class="find-field">
-        <input id="q" placeholder="${queryPlaceholder}" value="${escapeHtml(initialQuery)}" spellcheck="false" autocomplete="off" />
+        <input id="q" placeholder="${L.typeThenEnter}" value="${escapeHtml(initialQuery)}" spellcheck="false" autocomplete="off" />
         <div class="togs" aria-label="options">
           <label class="tog" title="${L.matchCase}"><input id="matchCase" type="checkbox" ${initialOptions.matchCase ? "checked" : ""} /><span>Aa</span></label>
           <label class="tog" title="${L.wholeWord}"><input id="wholeWord" type="checkbox" ${initialOptions.wholeWord ? "checked" : ""} /><span>W</span></label>
@@ -1189,17 +1207,20 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
     let viewMode = "search";
     let lastSearchItems = [];
     let lastSearchTab = "text";
-    let searchOnType = ${searchOnType ? "true" : "false"};
+    let partialQueued = false;
+    // Rendering thousands of rows freezes the panel; show a window and let the user extend it.
+    const RENDER_STEP = 500;
+    let renderLimit = RENDER_STEP;
     const collapsedFiles = new Set();
     /** Expanded folder paths. Empty ⇒ all folders collapsed (only top-level names visible). */
     const expandedFolders = new Set();
 
     function emptyHintText() {
-      return searchOnType ? "${L.typeToSearch}" : "${L.typeThenEnter}";
+      return "${L.typeThenEnter}";
     }
 
     function refreshQueryPlaceholder() {
-      q.placeholder = searchOnType ? "${L.query}" : "${L.typeThenEnter}";
+      q.placeholder = "${L.typeThenEnter}";
     }
 
     function setReplaceOpen(on) {
@@ -1358,13 +1379,6 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       }
     });
     q.addEventListener("keydown", (e) => { if (e.key === "Enter") run(true); });
-    q.addEventListener("input", () => {
-      if (!searchOnType) {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        return;
-      }
-      run(false);
-    });
     for (const el of [matchCase, wholeWord, useRegex, fuzzy, excludeGitIgnored, excludeSearchIgnored]) {
       el.addEventListener("change", () => run(true));
     }
@@ -1416,7 +1430,6 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       if (!msg || !msg.type) return;
 
       if (msg.type === "config") {
-        searchOnType = msg.searchOnType !== false;
         if (typeof msg.modernUi === "boolean") {
           document.body.classList.toggle("modern-ui", msg.modernUi);
         }
@@ -1505,6 +1518,8 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
         viewMode = "search";
         setBusy(true, "${L.searching}");
         out.innerHTML = "";
+        lastSearchItems = [];
+        renderLimit = RENDER_STEP;
         return;
       }
       if (msg.type === "searchError") {
@@ -1515,29 +1530,44 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       }
       if (msg.type === "resultsPartial") {
         if (viewMode !== "search") return;
-        const items = Array.isArray(msg.items) ? msg.items : [];
-        lastSearchItems = items;
+        if (!acceptItems(msg)) return;
         lastSearchTab = msg.tab || activeTab;
         if (!paused) setBusy(true, "${L.searching}");
+        // Coalesce: at most one render per frame, always of the latest items.
+        if (partialQueued) return;
+        partialQueued = true;
         requestAnimationFrame(() => {
+          partialQueued = false;
           if (Number(msg.requestId) !== activeRequestId || viewMode !== "search") return;
-          render(items, msg.tab || activeTab, { partial: true, stopped: false });
+          render(lastSearchItems, lastSearchTab, { partial: true, stopped: false });
         });
         return;
       }
       if (msg.type !== "results") return;
       if (viewMode !== "search") return;
-      const items = Array.isArray(msg.items) ? msg.items : [];
-      lastSearchItems = items;
+      if (!acceptItems(msg)) return;
       lastSearchTab = msg.tab || activeTab;
       const stopped = !!msg.stopped;
       setBusy(false);
       requestAnimationFrame(() => {
         if (msg.requestId && Number(msg.requestId) !== activeRequestId) return;
         if (viewMode !== "search") return;
-        render(items, msg.tab || activeTab, { partial: false, stopped });
+        render(lastSearchItems, lastSearchTab, { partial: false, stopped });
       });
     });
+
+    // Results arrive as deltas (offset > 0 appends); offset 0 replaces the list.
+    function acceptItems(msg) {
+      const inc = Array.isArray(msg.items) ? msg.items : [];
+      const offset = Number(msg.offset) || 0;
+      if (!offset) {
+        lastSearchItems = inc;
+        return true;
+      }
+      if (offset !== lastSearchItems.length) return false;
+      for (const it of inc) lastSearchItems.push(it);
+      return true;
+    }
 
     function stripIcon(label) {
       return String(label || "").replace(/^\\$\\([^)]+\\)\\s*/, "");
@@ -1904,6 +1934,9 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
         return;
       }
 
+      const total = items.length;
+      if (total > renderLimit) items = items.slice(0, renderLimit);
+
       if (tab === "text") {
         const tree = buildPathTree(items);
         const topDirs = [...tree.dirs.keys()].sort((a, b) => a.localeCompare(b));
@@ -1911,6 +1944,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
         // Files at workspace root (no folder prefix)
         const rootFiles = [...tree.files.keys()].sort((a, b) => a.localeCompare(b));
         for (const fp of rootFiles) out.appendChild(fileGroup(fp, tree.files.get(fp)));
+        appendShowMore(total, tab);
         applySelectionToRows();
         return;
       }
@@ -1920,7 +1954,21 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       label.textContent = tab;
       out.appendChild(label);
       for (const it of items) out.appendChild(listRow(it));
+      appendShowMore(total, tab);
       applySelectionToRows();
+    }
+
+    function appendShowMore(total, tab) {
+      if (total <= renderLimit) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "show-more";
+      btn.textContent = "${L.showMore} (" + (total - renderLimit) + ")";
+      btn.addEventListener("click", () => {
+        renderLimit += RENDER_STEP * 2;
+        render(lastSearchItems, tab, { partial: false, stopped: false });
+      });
+      out.appendChild(btn);
     }
 
     tabsWrap.addEventListener("click", (e) => {
@@ -1957,14 +2005,7 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
       }
     });
 
-    function esc(s){
-      return String(s)
-        .replaceAll("&","&amp;")
-        .replaceAll("<","&lt;")
-        .replaceAll(">","&gt;")
-        .replaceAll('"',"&quot;")
-        .replaceAll("'","&#39;");
-    }
+    const esc = ${escapeHtml};
     refreshScopeInfo();
     refreshQueryPlaceholder();
     out.innerHTML = '<div class="empty">' + emptyHintText() + '</div>';
@@ -1976,17 +2017,12 @@ function getHtml(initialQuery, initialOptions, extras = {}, cspSource = "") {
 </html>`;
 }
 
-function escapeHtml(text) {
-  return String(text).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
 module.exports = {
   openFullscreenSearch,
   pushFullscreenConfig() {
     if (!fullscreenPanel) return;
     fullscreenPanel.webview.postMessage({
       type: "config",
-      searchOnType: getConfig().searchOnType !== false,
       modernUi: isModernUiEnabled()
     });
   }

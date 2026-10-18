@@ -4,7 +4,7 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs/promises");
 const { t } = require("./i18n");
-const { buildRegex, replaceInString, collectReplacePreviews } = require("./replaceEngine");
+const { decodeUtf8Strict, endPosition, buildRegex, replaceInString, collectReplacePreviews } = require("./replaceEngine");
 
 /**
  * @typedef {vscode.QuickPickItem & {
@@ -138,7 +138,6 @@ function getConfig() {
     maxResults: Math.min(100000, Math.max(50, Math.floor(configured))),
     caseInsensitive: c.get("caseInsensitive", true),
     preview: c.get("preview", true),
-    searchOnType: c.get("searchOnType", true) !== false,
     excludeGlobs: getExcludeGlobs()
   };
 }
@@ -193,16 +192,11 @@ function makeItem(filePath, lineNumber, column, detail) {
   };
 }
 
-function parseSearchLine(line, rootPath, withColumn) {
-  const m = withColumn
-    ? line.match(/^(.*?):(\d+):(\d+):(.*)$/)
-    : line.match(/^(.*?):(\d+):(.*)$/);
+function parseRipgrepLine(line, rootPath) {
+  const m = line.match(/^(.*?):(\d+):(\d+):(.*)$/);
   if (!m) return undefined;
-  const filePath = normalizeRelPath(m[1], rootPath);
-  return makeItem(filePath, Number(m[2]), withColumn ? Number(m[3]) : 1, withColumn ? m[4] : m[3]);
+  return makeItem(normalizeRelPath(m[1], rootPath), Number(m[2]), Number(m[3]), m[4]);
 }
-
-const parseRipgrepLine = (line, rootPath) => parseSearchLine(line, rootPath, true);
 
 function fuzzyScore(text, pattern) {
   if (!pattern) return 0;
@@ -654,9 +648,13 @@ async function getBundledRipgrepPath() {
   const exeName = process.platform === "win32" ? "rg.exe" : "rg";
   const appRoot = vscode.env.appRoot;
   if (!appRoot) return null;
+  // Newer VS Code ships it as @vscode/ripgrep-universal/bin/<platform>-<arch>/.
+  const universal = path.join("@vscode", "ripgrep-universal", "bin", `${process.platform}-${process.arch}`);
   for (const candidate of [
     path.join(appRoot, "node_modules.asar.unpacked", "@vscode", "ripgrep", "bin", exeName),
-    path.join(appRoot, "node_modules", "@vscode", "ripgrep", "bin", exeName)
+    path.join(appRoot, "node_modules", "@vscode", "ripgrep", "bin", exeName),
+    path.join(appRoot, "node_modules.asar.unpacked", universal, exeName),
+    path.join(appRoot, "node_modules", universal, exeName)
   ]) {
     try {
       await fs.access(candidate);
@@ -686,13 +684,13 @@ async function getSearchFileList(options) {
  * @param {string} query
  * @param {Record<string, unknown>=} options
  * @param {boolean} listFiles
- * @param {boolean=} useFilesFrom search only paths piped via --files-from=-
  */
-function buildRgArgs(query, options, listFiles, useFilesFrom = false) {
+function buildRgArgs(query, options, listFiles) {
   const args = [
     options?.matchCase ? "" : "-i",
     listFiles ? "-l" : "--no-heading",
-    ...(listFiles ? [] : ["--line-number", "--column"]),
+    // Cap long lines (minified bundles) so one hit does not ship a megabyte to the UI.
+    ...(listFiles ? [] : ["--line-number", "--column", "--max-columns", "300", "--max-columns-preview"]),
     "--color",
     "never",
     "--no-config",
@@ -703,89 +701,28 @@ function buildRgArgs(query, options, listFiles, useFilesFrom = false) {
     "--max-filesize",
     "2M"
   ];
-  if (useFilesFrom) {
-    // Index is the source of truth — skip VCS/glob re-filters (rg does this with --files-from).
-    args.push("--files-from", "-", query);
-  } else {
-    pushRgExcludeGlobs(args);
-    const scopedTarget = normalizeScopePath(options?.scopePath) || ".";
-    args.push(query, scopedTarget);
-  }
+  // rg walks the tree with the same ignore rules and globs the path index is built from.
+  pushRgExcludeGlobs(args);
+  args.push(query, normalizeScopePath(options?.scopePath) || ".");
   return args.filter(Boolean);
 }
 
-/**
- * @param {import("child_process").ChildProcess} child
- * @param {string[]} files
- */
-function writeFilesToRgStdin(child, files) {
-  return new Promise((resolve, reject) => {
-    if (!child.stdin) {
-      resolve();
-      return;
-    }
-    let i = 0;
-    const onError = (err) => {
-      try {
-        child.stdin.destroy();
-      } catch {
-        // ignore
-      }
-      reject(err);
-    };
-    child.stdin.on("error", onError);
-    const write = () => {
-      try {
-        while (i < files.length) {
-          const ok = child.stdin.write(`${files[i]}\n`);
-          i += 1;
-          if (!ok) {
-            child.stdin.once("drain", write);
-            return;
-          }
-        }
-        child.stdin.end();
-        resolve();
-      } catch (err) {
-        onError(err);
-      }
-    };
-    write();
-  });
-}
-
-async function runRipgrep(rootPath, query, options, listFiles, files) {
+/** Relative paths of files containing the query, or null when rg is unavailable or fails. */
+async function runRipgrepList(rootPath, query, options) {
   const rgPath = await getBundledRipgrepPath();
   if (!rgPath) return null;
 
-  const useFilesFrom = Array.isArray(files);
-  if (useFilesFrom && !files.length) return [];
-
   return new Promise((resolve) => {
-    const child = childProcess.spawn(rgPath, buildRgArgs(query, options, listFiles, useFilesFrom), {
+    const child = childProcess.spawn(rgPath, buildRgArgs(query, options, true), {
       cwd: rootPath,
       windowsHide: true,
-      stdio: useFilesFrom ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"]
     });
 
-    if (useFilesFrom) {
-      writeFilesToRgStdin(child, files).catch(() => {
-        try {
-          child.kill();
-        } catch {
-          // ignore
-        }
-      });
-    }
-
     let stdout = "";
-    let stderr = "";
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
       if (stdout.length > 32 * 1024 * 1024) child.kill();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
     });
     child.on("error", () => resolve(null));
     child.on("close", (code) => {
@@ -794,12 +731,7 @@ async function runRipgrep(rootPath, query, options, listFiles, files) {
         return;
       }
       const lines = stdout.split(/\r?\n/).filter(Boolean);
-      if (listFiles) {
-        resolve(lines.map((line) => normalizeRelPath(line.trim(), rootPath)).filter(Boolean));
-        return;
-      }
-      const items = lines.map((line) => parseRipgrepLine(line, rootPath)).filter(Boolean);
-      resolve(!items.length && stderr ? null : items);
+      resolve(lines.map((line) => normalizeRelPath(line.trim(), rootPath)).filter(Boolean));
     });
   });
 }
@@ -937,28 +869,14 @@ async function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
   const isCancelled = () =>
     (typeof hooks.isCancelled === "function" && hooks.isCancelled()) || Boolean(controller?.isCancelled());
   const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
-  const useFilesFrom = Array.isArray(hooks.files);
-  if (useFilesFrom && !hooks.files.length) {
-    onBatch({ items: [], done: true, total: 0 });
-    return [];
-  }
 
   return new Promise((resolve) => {
-    const child = childProcess.spawn(rgPath, buildRgArgs(query, options, false, useFilesFrom), {
+    const child = childProcess.spawn(rgPath, buildRgArgs(query, options, false), {
       cwd: rootPath,
       windowsHide: true,
-      stdio: useFilesFrom ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"]
     });
     if (controller) controller.attachChild(child);
-    if (useFilesFrom) {
-      writeFilesToRgStdin(child, hooks.files).catch(() => {
-        try {
-          child.kill();
-        } catch {
-          // ignore
-        }
-      });
-    }
 
     const waitIfPaused = async () => {
       if (controller) await controller.waitIfPaused();
@@ -1026,7 +944,7 @@ async function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
           if (!item || !filterItem(item)) continue;
           items.push(item);
           if (items.length === 1 || items.length % batchSize === 0) {
-            onBatch({ items: items.slice(), done: false, total: items.length });
+            onBatch({ items, done: false, total: items.length });
             await paintDelay();
             await waitIfPaused();
             if (isCancelled()) {
@@ -1047,7 +965,7 @@ async function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
     child.on("close", (code) => {
       enqueue(async () => {
         if (isCancelled()) {
-          onBatch({ items: items.slice(), done: true, total: items.length, stopped: true });
+          onBatch({ items, done: true, total: items.length, stopped: true });
           finish(items);
           return;
         }
@@ -1059,7 +977,7 @@ async function runRipgrepStreaming(rootPath, query, options, hooks = {}) {
           finish(null);
           return;
         }
-        onBatch({ items: items.slice(), done: true, total: items.length });
+        onBatch({ items, done: true, total: items.length });
         finish(items);
       });
     });
@@ -1090,8 +1008,7 @@ async function searchTextStreaming(rootPath, query, options, hooks = {}) {
     isCancelled,
     filterItem,
     onBatch,
-    controller,
-    files
+    controller
   });
   if (streamed !== null) return streamed;
   if (isCancelled()) return [];
@@ -1202,6 +1119,7 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
     else await new Promise((r) => setTimeout(r, 0));
   };
   const filterItem = typeof hooks.filterItem === "function" ? hooks.filterItem : () => true;
+  const live = typeof hooks.onBatch === "function";
   await getIndexedPaths();
   if (isCancelled()) {
     onBatch({ items: [], done: true, total: 0, stopped: true });
@@ -1255,7 +1173,7 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
   };
 
   const maybePaint = async () => {
-    if (!(rows.length === 1 || sincePaint >= 120)) return false;
+    if (!live || !(rows.length === 1 || sincePaint >= 120)) return false;
     sincePaint = 0;
     if (rows.length === lastEmitted) return false;
     lastEmitted = rows.length;
@@ -1297,79 +1215,6 @@ async function searchPathIndexStreaming(kind, query, limit, options, hooks = {})
   const items = rankFuzzy(rows, cap);
   onBatch({ items, done: true, total: items.length, stopped: isCancelled() });
   return items;
-}
-
-async function fallbackSearch(rootPath, query, maxResults, options, filesOpt) {
-  const matchCase = Boolean(options?.matchCase);
-  const wholeWord = Boolean(options?.wholeWord);
-  const useRegex = Boolean(options?.useRegex);
-  const needle = matchCase ? query : query.toLowerCase();
-  const regex = buildRegex(query, { matchCase, wholeWord, useRegex });
-  const files = Array.isArray(filesOpt) ? filesOpt : await getSearchFileList(options);
-
-  /** @type {SearchItem[]} */
-  const out = [];
-  for (const rel of files) {
-    if (out.length >= maxResults) break;
-    const abs = path.join(rootPath, rel);
-    let content;
-    try {
-      const stat = await fs.stat(abs);
-      if (!stat.isFile() || stat.size > 2 * 1024 * 1024) continue;
-      content = await fs.readFile(abs, "utf8");
-    } catch {
-      continue;
-    }
-    const filePath = normalizeRelPath(abs, rootPath);
-    const lines = content.split(/\r?\n/);
-    for (let i = 0; i < lines.length && out.length < maxResults; i += 1) {
-      const src = lines[i];
-      let at = -1;
-      if (regex) {
-        const m = regex.exec(src);
-        at = m ? m.index : -1;
-      } else {
-        const hay = matchCase ? src : src.toLowerCase();
-        at = hay.indexOf(needle);
-        if (wholeWord && at >= 0) {
-          const left = at === 0 ? "" : hay[at - 1];
-          const right = at + needle.length >= hay.length ? "" : hay[at + needle.length];
-          if (!(!/[a-zA-Z0-9_]/.test(left) && !/[a-zA-Z0-9_]/.test(right))) at = -1;
-        }
-      }
-      if (at < 0) continue;
-      out.push(makeItem(filePath, i + 1, at + 1, lines[i]));
-    }
-  }
-  return out;
-}
-
-async function search(text, options) {
-  if (!text || text.trim().length <= 1) return [];
-  const rootPath = getRootPath();
-  if (!rootPath) return [];
-
-  await loadGitIgnoreRules(rootPath);
-  const cfg = getConfig();
-  const opts = mergeOptions(options);
-  const q = text.trim();
-  const noResults = [{ label: t("No results found", "Brak wynikow"), alwaysShow: true }];
-  const timeoutMsg = [
-    { label: t("Search timeout (narrow query)", "Przekroczono czas wyszukiwania (zawęź frazę)"), alwaysShow: true }
-  ];
-  const files = await getSearchFileList(opts);
-  if (!files.length) return noResults;
-
-  const rgItems = await runRipgrep(rootPath, q, opts, false, files);
-  if (rgItems) {
-    return rgItems.length ? rgItems.slice(0, cfg.maxResults) : noResults;
-  }
-  try {
-    const items = await fallbackSearch(rootPath, q, cfg.maxResults, opts, files);
-    return items.length ? items : timeoutMsg;
-  } catch {
-    throw new Error("Search failed.");
-  }
 }
 
 function rankFuzzy(rows, limit) {
@@ -2238,92 +2083,6 @@ function initPathIndexWatchers(context, hooks) {
   );
 }
 
-async function searchFiles(query, limit, options) {
-  if (!query) return [];
-  await getIndexedPaths();
-  const fuzzy = Boolean(options?.fuzzy);
-  const needle = query.toLowerCase();
-  const cap = Math.max(1, Number(limit) || 1);
-  const candidates = candidateIndicesFor(needle, "files");
-  if (Array.isArray(candidates) && candidates.length === 0) return [];
-  /** @type {{item: SearchItem, s: number}[]} */
-  const rows = [];
-  const files = pathIndex.files;
-  const bases = pathIndex.fileBases;
-  const baseNames = pathIndex.fileBaseNames;
-  const visit = (i) => {
-    const rel = files[i];
-    if (hasIgnoredPathSegment(rel)) return;
-    const base = bases[i] || "";
-    const s = fuzzy ? fuzzyScore(base, needle) : base.includes(needle) ? 1 : -1;
-    if (s < 0) return;
-    rows.push({
-      item: {
-        label: `$(file) ${baseNames[i] || path.posix.basename(rel)}`,
-        description: rel,
-        detail: "File",
-        filePath: rel,
-        lineNumber: 1,
-        column: 1
-      },
-      s
-    });
-  };
-  if (candidates) {
-    for (let c = 0; c < candidates.length; c += 1) {
-      visit(candidates[c]);
-      if (!fuzzy && rows.length >= cap) break;
-    }
-  } else {
-    for (let i = 0; i < files.length; i += 1) {
-      visit(i);
-      if (!fuzzy && rows.length >= cap) break;
-    }
-  }
-  return rankFuzzy(rows, cap);
-}
-
-async function searchFolders(query, limit, options) {
-  if (!query) return [];
-  await getIndexedPaths();
-  const fuzzy = Boolean(options?.fuzzy);
-  const needle = query.toLowerCase();
-  const cap = Math.max(1, Number(limit) || 1);
-  const candidates = candidateIndicesFor(needle, "folders");
-  if (Array.isArray(candidates) && candidates.length === 0) return [];
-  /** @type {{item: SearchItem, s: number}[]} */
-  const rows = [];
-  const folders = pathIndex.folders;
-  const lowers = pathIndex.folderLowers;
-  const visit = (i) => {
-    const dir = folders[i];
-    if (hasIgnoredPathSegment(dir)) return;
-    const hay = lowers[i] || "";
-    const s = fuzzy ? fuzzyScore(hay, needle) : hay.includes(needle) ? 1 : -1;
-    if (s < 0) return;
-    rows.push({
-      item: {
-        label: `$(folder) ${path.posix.basename(dir)}`,
-        description: dir,
-        detail: "Folder"
-      },
-      s
-    });
-  };
-  if (candidates) {
-    for (let c = 0; c < candidates.length; c += 1) {
-      visit(candidates[c]);
-      if (!fuzzy && rows.length >= cap) break;
-    }
-  } else {
-    for (let i = 0; i < folders.length; i += 1) {
-      visit(i);
-      if (!fuzzy && rows.length >= cap) break;
-    }
-  }
-  return rankFuzzy(rows, cap);
-}
-
 async function searchSymbols(query, limit, options) {
   if (!query) return [];
   const symbols = await vscode.commands.executeCommand("vscode.executeWorkspaceSymbolProvider", query);
@@ -2371,36 +2130,9 @@ async function searchCommands(query, limit, options) {
   }));
 }
 
-async function searchByTab(tab, query, options) {
-  const q = String(query || "").trim();
-  if (!q) return [];
-
-  const max = getConfig().maxResults;
-  const opts = mergeOptions(options);
-  const rootPath = getRootPath();
-  await loadGitIgnoreRules(rootPath);
-  const searchIgnoreRegexes = opts.excludeSearchIgnored ? await readSearchIgnoreRegexes(rootPath) : [];
-  const tabName = String(tab || "text");
-  // Files/folders index and ripgrep already applied .gitignore + excludeGlobs —
-  // avoid re-running the full matcher on every hit (was the main slowdown).
-  const alreadyFiltered = tabName === "files" || tabName === "folders" || tabName === "text";
-  const scoped = (arr) => {
-    const narrowed = applyScope(applySearchIgnore(arr, searchIgnoreRegexes), opts.scopePath);
-    return alreadyFiltered ? narrowed : applyExcludeGlobs(narrowed);
-  };
-
-  const handlers = {
-    files: () => searchFiles(q, max, opts),
-    folders: () => searchFolders(q, max, opts),
-    text: () => search(q, opts),
-    symbols: () => searchSymbols(q, max, opts),
-    commands: () => searchCommands(q, max, opts)
-  };
-  return scoped(await (handlers[tabName] || handlers.text)());
-}
-
 /**
- * Like searchByTab, but emits partial result batches for live UI (fullscreen).
+ * Search one tab. With hooks.onBatch it also emits partial batches for live UI (fullscreen);
+ * without it (QuickPick) only the final list is built.
  * @param {"files"|"folders"|"text"|"symbols"|"commands"} tab
  * @param {string} query
  * @param {Record<string, unknown>=} options
@@ -2432,10 +2164,10 @@ async function searchByTabStreaming(tab, query, options, hooks = {}) {
     const scoped = applyScope(applySearchIgnore([item], searchIgnoreRegexes), opts.scopePath);
     return scoped.length > 0;
   };
-  const emit = (batch) => {
+  const emit = typeof hooks.onBatch === "function" ? (batch) => {
     if (isCancelled() && !batch.done) return;
     onBatch(batch);
-  };
+  } : undefined;
 
   if (isCancelled()) return [];
 
@@ -2536,7 +2268,7 @@ async function listFilesContainingText(findQuery, options) {
   await loadGitIgnoreRules(rootPath);
   const searchIgnoreRegexes = opts.excludeSearchIgnored ? await readSearchIgnoreRegexes(rootPath) : [];
   const files = await getSearchFileList(opts);
-  let paths = await runRipgrep(rootPath, findTrim, opts, true, files);
+  let paths = await runRipgrepList(rootPath, findTrim, opts);
   if (!paths?.length) paths = await fallbackListFilesContainingText(rootPath, findTrim, opts);
   return [...new Set(filterPathsForReplace(paths || [], searchIgnoreRegexes, opts.scopePath))];
 }
@@ -2564,6 +2296,27 @@ function validateReplace(find, options, fuzzyHint) {
   return { ok: true, findTrim, rootPath };
 }
 
+/**
+ * Text of a file for replace. Open documents and non-UTF-8 files go through VS Code (its encoding
+ * detection wins); plain UTF-8 files are read straight from disk so no document is created per file.
+ * The fast path is only taken when files.encoding is utf8, otherwise VS Code would decode differently.
+ * @returns {Promise<{ text: string, end: import("vscode").Position }>}
+ */
+async function readTextForReplace(uri) {
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+  let doc = open;
+  if (!doc && vscode.workspace.getConfiguration("files", uri).get("encoding") === "utf8") {
+    const text = decodeUtf8Strict(await vscode.workspace.fs.readFile(uri));
+    if (text !== null) {
+      const end = endPosition(text);
+      return { text, end: new vscode.Position(end.line, end.character) };
+    }
+  }
+  doc = doc || (await vscode.workspace.openTextDocument(uri));
+  const text = doc.getText();
+  return { text, end: doc.positionAt(text.length) };
+}
+
 async function previewReplace(find, replace, options) {
   const opts = mergeOptions(options);
   const check = validateReplace(find, opts, true);
@@ -2583,8 +2336,7 @@ async function previewReplace(find, replace, options) {
 
   for (const rel of paths) {
     try {
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(check.rootPath, rel)));
-      const text = doc.getText();
+      const { text } = await readTextForReplace(vscode.Uri.file(path.join(check.rootPath, rel)));
       if (light) {
         const { count } = replaceInString(text, check.findTrim, replaceStr, opts);
         if (!count) continue;
@@ -2643,12 +2395,11 @@ async function replaceAllInScope(find, replace, options) {
   for (const rel of paths) {
     const uri = vscode.Uri.file(path.join(check.rootPath, rel));
     try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      const text = doc.getText();
+      const { text, end } = await readTextForReplace(uri);
       const { newText, count } = replaceInString(text, check.findTrim, replaceStr, opts);
       if (!count) continue;
       occurrences += count;
-      edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), doc.positionAt(text.length)), newText);
+      edit.replace(uri, new vscode.Range(new vscode.Position(0, 0), end), newText);
       changedFiles += 1;
     } catch {
       // skip unreadable
@@ -2692,9 +2443,7 @@ async function openResult(item, preserveFocus) {
 
 module.exports = {
   getConfig,
-  search,
   openResult,
-  searchByTab,
   searchByTabStreaming,
   createSearchController,
   previewReplace,

@@ -1,5 +1,5 @@
 const vscode = require("vscode");
-const { getConfig, searchByTab, openResult } = require("./searchEngine");
+const { getConfig, searchByTabStreaming, openResult } = require("./searchEngine");
 const { t } = require("./i18n");
 
 /** @typedef {import("./searchEngine").SearchItem} SearchItem */
@@ -181,7 +181,11 @@ async function runQuickPickSearch(quickPick, value) {
   quickPick.items = [{ label: t("Loading...", "Ladowanie..."), alwaysShow: true }];
 
   try {
-    const items = await searchByTab(tab, q, searchOptions);
+    // Same engine as the fullscreen panel, without onBatch: only the final list is built.
+    const found = tab === "text" && q.length <= 1
+      ? []
+      : await searchByTabStreaming(tab, q, searchOptions, { isCancelled: () => reqId !== searchSeq });
+    const items = found.length ? found : [{ label: t("No results found", "Brak wynikow"), alwaysShow: true }];
     if (reqId !== searchSeq) return;
     if (activeQuickPick !== quickPick) return;
     if (activeTab !== tab) return;
@@ -190,7 +194,7 @@ async function runQuickPickSearch(quickPick, value) {
     cacheValue = q;
     cacheItems = items;
     quickPick.items = items;
-    setQuickPickTitle(quickPick, items.length);
+    setQuickPickTitle(quickPick, found.length);
   } catch (error) {
     if (reqId !== searchSeq || activeQuickPick !== quickPick) return;
     quickPick.items = [];
@@ -230,20 +234,16 @@ function openQuickSearch() {
   lastUpdateFn = updateItems;
 
   quickPick.onDidChangeValue((value) => {
-    if (!getConfig().searchOnType) {
-      searchSeq += 1;
-      quickPick.busy = false;
-      quickPick.items = [
-        {
-          label: t("Press Enter to search…", "Nacisnij Enter, aby szukac…"),
-          alwaysShow: true,
-          _sfPendingSearch: true
-        }
-      ];
-      quickPick.activeItems = quickPick.items;
-      return;
-    }
-    updateItems(value).catch(() => {});
+    searchSeq += 1;
+    quickPick.busy = false;
+    quickPick.items = [
+      {
+        label: t("Press Enter to search…", "Nacisnij Enter, aby szukac…"),
+        alwaysShow: true,
+        _sfPendingSearch: true
+      }
+    ];
+    quickPick.activeItems = quickPick.items;
   });
 
   quickPick.onDidAccept(async () => {
